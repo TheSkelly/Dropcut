@@ -29,16 +29,15 @@ jobs:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             features: vulkan
-            # whisper.cpp's Vulkan build nests deeply; a short target dir keeps
-            # paths under Windows' 260-character limit.
-            target_dir: C:\t
           - platform: macos-latest
             target: aarch64-apple-darwin
             features: metal
-            target_dir: ${{ github.workspace }}/target
     runs-on: ${{ matrix.platform }}
     env:
-      CARGO_TARGET_DIR: ${{ matrix.target_dir }}
+      # Windows: whisper.cpp's Vulkan build nests deeply, so use a short
+      # target dir to stay under the 260-character path limit. Elsewhere use
+      # an absolute path so cargo and tauri-action agree on where output goes.
+      CARGO_TARGET_DIR: ${{ matrix.platform == 'windows-latest' && 'C:\t' || format('{0}/target', github.workspace) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -54,7 +53,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}-${{ matrix.features }}
-          workspaces: ". -> ${{ matrix.target_dir }}"
+          workspaces: ". -> ${{ env.CARGO_TARGET_DIR }}"
 
       # ---------------------------------------------------------- Windows deps
       # Build whisper.cpp with Ninja instead of MSBuild: MSBuild's file tracker
