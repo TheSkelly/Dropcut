@@ -50,6 +50,10 @@ pub struct RenderSettings {
     pub censor_mode: CensorMode,
 }
 
+/// ffmpeg's `sine` source peaks at 1/8 full scale; this lifts the bleep to
+/// about -14 dBFS, roughly as loud as normal speech.
+const BLEEP_GAIN: f64 = 1.6;
+
 /// Ranges as an ffmpeg expression: `between(t,0.000,1.500)+between(t,...)`.
 fn between_expr(spans: &[Span]) -> String {
     spans.iter().map(|s| format!("between(t\\,{:.3}\\,{:.3})", s.start, s.end)).collect::<Vec<_>>().join("+")
@@ -79,7 +83,7 @@ pub fn build_filter_graph(timeline: &Timeline, info: &MediaInfo, censor_mode: Ce
                     graph.push(format!("{audio_in}[muted]"));
                     graph.push(format!(
                         "sine=frequency=1000:sample_rate=48000,atrim=duration={:.3},\
-                         volume=volume='if({censor}\\,0.25\\,0)':eval=frame[tone]",
+                         volume=volume='if({censor}\\,{BLEEP_GAIN}\\,0)':eval=frame[tone]",
                         timeline.duration
                     ));
                     graph.push("[muted][tone]amix=inputs=2:duration=first:normalize=0[mixed]".into());

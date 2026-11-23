@@ -770,7 +770,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dropcut"
+name = "dropcut-app"
 version = "0.1.0"
 dependencies = [
  "dropcut-core",
