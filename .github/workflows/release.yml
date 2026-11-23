@@ -35,7 +35,7 @@ jobs:
           - platform: macos-latest
             target: aarch64-apple-darwin
             features: metal
-            target_dir: target
+            target_dir: ${{ github.workspace }}/target
     runs-on: ${{ matrix.platform }}
     env:
       CARGO_TARGET_DIR: ${{ matrix.target_dir }}
@@ -57,6 +57,18 @@ jobs:
           workspaces: ". -> ${{ matrix.target_dir }}"
 
       # ---------------------------------------------------------- Windows deps
+      # Build whisper.cpp with Ninja instead of MSBuild: MSBuild's file tracker
+      # can't handle the deep paths of the Vulkan shader generator.
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - name: Use Ninja for CMake (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ninja -y --no-progress
+          "CMAKE_GENERATOR=Ninja" | Out-File -FilePath $env:GITHUB_ENV -Append
+
       - name: Install Vulkan SDK (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
