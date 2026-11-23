@@ -1,0 +1,28 @@
+[package]
+name = "dropcut"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DropCut desktop app"
+
+[lib]
+name = "dropcut_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[features]
+default = []
+# GPU backend for speech recognition. CI picks one per platform:
+# Windows -> vulkan (works on NVIDIA with just the normal driver), macOS -> metal.
+vulkan = ["dropcut-core/vulkan"]
+metal = ["dropcut-core/metal"]
+cuda = ["dropcut-core/cuda"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+dropcut-core = { path = "../crates/dropcut-core", features = ["whisper", "download"] }
+tauri = { version = "2", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2"
+serde.workspace = true
+serde_json.workspace = true

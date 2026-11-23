@@ -47,6 +47,19 @@ impl FfmpegPaths {
         paths
     }
 
+    /// True if ffmpeg and ffprobe both run.
+    pub fn command_ok(&self) -> bool {
+        [&self.ffmpeg, &self.ffprobe].iter().all(|tool| {
+            self.command(tool)
+                .arg("-version")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        })
+    }
+
     pub(crate) fn command(&self, tool: &Path) -> Command {
         let mut cmd = Command::new(tool);
         hide_console_window(&mut cmd);

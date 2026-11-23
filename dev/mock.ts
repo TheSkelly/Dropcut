@@ -1,0 +1,49 @@
+// Browser-only harness: runs the real UI with Tauri IPC mocked from a
+// fixture produced by `cargo run --example ui_fixture`. For development and
+// screenshots only; never bundled into the app.
+import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
+
+const fixture = await (await fetch("./fixture.json")).json();
+mockWindows("main");
+
+let downloaded = false;
+mockIPC(async (cmd, args: any) => {
+  switch (cmd) {
+    case "app_info":
+      return {
+        version: "0.1.0",
+        gpu_backend: "Vulkan (NVIDIA / AMD / Intel)",
+        ffmpeg_ok: true,
+        ffmpeg_path: "ffmpeg",
+        default_model: "large-v3-turbo-q5_0",
+        models: [
+          { id: "base", label: "Base", size_mb: 142, note: "Fast, fine for clear audio. Good on CPU.", downloaded: true },
+          { id: "large-v3-turbo-q5_0", label: "Large v3 Turbo", size_mb: 547, note: "Best accuracy. Recommended with an NVIDIA GPU or Apple Silicon.", downloaded },
+        ],
+      };
+    case "open_media":
+      return fixture.opened;
+    case "detect_silences":
+      return { threshold_db: fixture.opened.threshold_db, timeline: args.timeline };
+    case "download_model":
+      downloaded = true;
+      return null;
+    case "transcribe":
+      return fixture.transcribed;
+    case "find_profanity":
+      return args.timeline;
+    case "preview_captions":
+      return fixture.cues;
+    case "export":
+      return { output: "/videos/test (DropCut).mp4", srt: "/videos/test (DropCut).srt", encoder: "nvenc", duration: 9.8 };
+    case "plugin:dialog|open":
+      return "/videos/test.mp4";
+    case "plugin:event|listen":
+      return 1;
+    default:
+      return null;
+  }
+});
+(window as any).__TAURI_INTERNALS__.convertFileSrc = () => "./test.mp4";
+
+await import("../src/main");

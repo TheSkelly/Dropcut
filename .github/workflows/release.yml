@@ -1,0 +1,101 @@
+# Builds the DropCut installers and attaches them to a GitHub release.
+#
+# Run it by pushing a version tag (git tag v0.1.0 && git push origin v0.1.0)
+# or from the Actions tab with "Run workflow".
+#
+# Windows: NSIS .exe installer, speech recognition on the GPU through Vulkan
+#          (works on NVIDIA with the normal driver; no CUDA install needed).
+# macOS:   .dmg for Apple Silicon, speech recognition on the GPU through Metal.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  VULKAN_VERSION: 1.4.304.1
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            features: vulkan
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            features: metal
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}-${{ matrix.features }}
+
+      # ---------------------------------------------------------- Windows deps
+      - name: Install Vulkan SDK (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://sdk.lunarg.com/sdk/download/$env:VULKAN_VERSION/windows/VulkanSDK-$env:VULKAN_VERSION-Installer.exe?Human=true"
+          Invoke-WebRequest -Uri $url -OutFile vulkan-sdk.exe
+          Start-Process -Wait -FilePath .\vulkan-sdk.exe -ArgumentList "--root","C:\VulkanSDK\$env:VULKAN_VERSION","--accept-licenses","--default-answer","--confirm-command","install"
+          "VULKAN_SDK=C:\VulkanSDK\$env:VULKAN_VERSION" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "C:\VulkanSDK\$env:VULKAN_VERSION\Bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - name: Bundle ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip" -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg-dl
+          $bin = Get-ChildItem -Path ffmpeg-dl -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          Copy-Item $bin.FullName "src-tauri/binaries/ffmpeg-${{ matrix.target }}.exe"
+          Copy-Item (Join-Path $bin.DirectoryName "ffprobe.exe") "src-tauri/binaries/ffprobe-${{ matrix.target }}.exe"
+
+      # ---------------------------------------------------------- macOS deps
+      - name: Bundle ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          for tool in ffmpeg ffprobe; do
+            curl -fsSL -o "$tool.zip" "https://ffmpeg.martin-riedl.de/redirect/latest/macos/arm64/release/$tool.zip"
+            unzip -o "$tool.zip" -d "dl-$tool"
+            cp "dl-$tool/$tool" "src-tauri/binaries/$tool-${{ matrix.target }}"
+            chmod +x "src-tauri/binaries/$tool-${{ matrix.target }}"
+          done
+
+      # ---------------------------------------------------------- build
+      - run: npm ci
+
+      - name: Test the engine
+        run: cargo test -p dropcut-core
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: DropCut v__VERSION__
+          releaseBody: |
+            **Windows:** download the `.exe`, run it. If Windows shows "Windows protected your PC", click *More info* then *Run anyway*.
+            **Mac (Apple Silicon):** download the `.dmg`, drag DropCut to Applications, then right-click DropCut and choose *Open* the first time.
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }} --features ${{ matrix.features }}

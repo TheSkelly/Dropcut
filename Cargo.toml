@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/dropcut-core", "crates/dropcut-cli"]
+members = ["crates/dropcut-core", "crates/dropcut-cli", "src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
