@@ -29,10 +29,16 @@ jobs:
           - platform: windows-latest
             target: x86_64-pc-windows-msvc
             features: vulkan
+            # whisper.cpp's Vulkan build nests deeply; a short target dir keeps
+            # paths under Windows' 260-character limit.
+            target_dir: C:\t
           - platform: macos-latest
             target: aarch64-apple-darwin
             features: metal
+            target_dir: target
     runs-on: ${{ matrix.platform }}
+    env:
+      CARGO_TARGET_DIR: ${{ matrix.target_dir }}
     steps:
       - uses: actions/checkout@v4
 
@@ -48,6 +54,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}-${{ matrix.features }}
+          workspaces: ". -> ${{ matrix.target_dir }}"
 
       # ---------------------------------------------------------- Windows deps
       - name: Install Vulkan SDK (Windows)
