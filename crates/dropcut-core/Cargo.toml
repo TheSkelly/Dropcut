@@ -1,0 +1,21 @@
+[package]
+name = "dropcut-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[features]
+default = []
+# Speech-to-text via whisper.cpp. GPU backends are opt-in.
+whisper = ["dep:whisper-rs"]
+vulkan = ["whisper", "whisper-rs/vulkan"]
+cuda = ["whisper", "whisper-rs/cuda"]
+metal = ["whisper", "whisper-rs/metal"]
+download = ["dep:ureq"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+whisper-rs = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }

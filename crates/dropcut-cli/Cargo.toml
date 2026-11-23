@@ -1,0 +1,17 @@
+[package]
+name = "dropcut-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "dropcut"
+path = "src/main.rs"
+
+[features]
+default = []
+whisper = ["dropcut-core/whisper", "dropcut-core/download"]
+
+[dependencies]
+dropcut-core = { path = "../dropcut-core" }
+serde_json.workspace = true
