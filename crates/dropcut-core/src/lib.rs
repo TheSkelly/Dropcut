@@ -9,9 +9,12 @@
 //! * [`transcript`]: word-level transcripts and transcription (Whisper)
 //! * [`profanity`]: finding and masking swear words
 //! * [`captions`]: grouping words into caption lines and writing SRT
+//! * [`burn`]: animated captions burned into the video (ASS)
+//! * [`zoom`]: automatic punch-in zooms
 //! * [`render`]: turning a timeline into a finished video with ffmpeg
 //! * [`models`]: the Whisper model catalogue and downloads
 
+pub mod burn;
 pub mod captions;
 pub mod error;
 pub mod media;
@@ -21,6 +24,7 @@ pub mod render;
 pub mod silence;
 pub mod timeline;
 pub mod transcript;
+pub mod zoom;
 
 pub use error::{Error, Result};
 pub use media::{FfmpegPaths, MediaInfo};

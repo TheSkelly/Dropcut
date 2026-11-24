@@ -1,5 +1,5 @@
 import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
-import type { CensorMode, Cue, Span } from "../types";
+import type { BurnSettings, CensorMode, Cue, Span, ZoomSegment } from "../types";
 import { cutAt, formatTime, mapTime } from "../timeline";
 
 export interface PlayerHandle {
@@ -17,6 +17,9 @@ interface Props {
   cues: Cue[];
   previewEdits: boolean;
   outputDuration: number;
+  zoom: ZoomSegment[];
+  zoomFocusY: number;
+  burn: BurnSettings;
   onTime: (t: number) => void;
 }
 
@@ -25,7 +28,21 @@ interface Props {
  * mutes (or bleeps) censored words, and overlays the captions.
  */
 export const Player = forwardRef<PlayerHandle, Props>(function Player(
-  { src, isVideo, keptSpans, cutSpans, censorSpans, censorMode, cues, previewEdits, outputDuration, onTime },
+  {
+    src,
+    isVideo,
+    keptSpans,
+    cutSpans,
+    censorSpans,
+    censorMode,
+    cues,
+    previewEdits,
+    outputDuration,
+    zoom,
+    zoomFocusY,
+    burn,
+    onTime,
+  },
   ref,
 ) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -99,6 +116,11 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(
   useEffect(() => () => void bleep.current?.ctx.close(), []);
 
   const outTime = useMemo(() => mapTime(keptSpans, time), [keptSpans, time]);
+  const scale = useMemo(() => {
+    if (!previewEdits || outTime === null) return 1;
+    return zoom.find((z) => outTime >= z.start && outTime < z.end)?.scale ?? 1;
+  }, [zoom, outTime, previewEdits]);
+
   const cue = useMemo(() => {
     if (outTime === null) return null;
     return cues.find((c) => outTime >= c.start && outTime < c.end) ?? null;
@@ -110,6 +132,7 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(
         <video
           ref={videoRef}
           src={src}
+          style={{ transform: `scale(${scale})`, transformOrigin: `50% ${zoomFocusY * 100}%` }}
           preload="auto"
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
@@ -117,12 +140,20 @@ export const Player = forwardRef<PlayerHandle, Props>(function Player(
         />
         {!isVideo && <div className="audio-badge">Audio file</div>}
         {cue && (
-          <div className="caption-overlay">
-            {cue.words.map((w, i) => (
-              <span key={i} className={outTime !== null && outTime >= w.start ? "spoken" : ""}>
-                {w.text}{" "}
-              </span>
-            ))}
+          <div
+            className={`caption-overlay style-${burn.enabled ? burn.style : "preview"} pos-${burn.enabled ? burn.position : "bottom"}`}
+            style={{ ["--hl" as string]: burn.highlight, ["--cap-scale" as string]: burn.enabled ? burn.size : 0.8 }}
+          >
+            {cue.words.map((w, i) => {
+              const next = cue.words[i + 1]?.start ?? cue.end;
+              const state =
+                outTime === null ? "" : outTime >= w.start && outTime < next ? "current" : outTime >= w.start ? "spoken" : "";
+              return (
+                <span key={i} className={state}>
+                  {burn.enabled && burn.style === "pop" ? w.text.toUpperCase() : w.text}{" "}
+                </span>
+              );
+            })}
           </div>
         )}
       </div>

@@ -8,12 +8,14 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use dropcut_core::burn::{self, BurnSettings};
 use dropcut_core::captions::{self, CaptionSettings};
 use dropcut_core::media::{self, FfmpegPaths, MediaInfo};
 use dropcut_core::profanity::{self, ProfanitySettings};
-use dropcut_core::render::{self, RenderSettings};
+use dropcut_core::render::{self, RenderSettings, VideoEffects};
 use dropcut_core::silence::{self, SilenceSettings};
 use dropcut_core::transcript::{self, TranscribeOptions, Transcript};
+use dropcut_core::zoom::{self, ZoomSegment, ZoomSettings};
 use dropcut_core::{models, RegionKind, Timeline};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -287,6 +289,10 @@ struct ExportRequest {
     render: RenderSettings,
     captions: CaptionSettings,
     write_srt: bool,
+    #[serde(default)]
+    burn: BurnSettings,
+    #[serde(default)]
+    zoom: ZoomSettings,
 }
 
 #[derive(Serialize)]
@@ -307,17 +313,32 @@ async fn export(app: AppHandle, state: State<'_, AppState>, req: ExportRequest) 
         return Err("Choose a different file name; exporting over the original isn't allowed.".into());
     }
     let cancel = reset_cancel(&state);
+    let fonts_dir = app.path().resource_dir().ok().map(|d| d.join("fonts"));
     let a = app.clone();
     blocking(move || {
         let paths = ffmpeg_paths();
         let info = media::probe(&paths, &source).map_err(err)?;
         emit(&a, "export", Some(0.0), "Starting export");
+
+        let out_words = captions::output_words(&req.words, &req.timeline, &req.captions);
+        let mut effects = VideoEffects { zoom_focus_y: req.zoom.focus_y, ..Default::default() };
+        if info.has_video {
+            effects.zoom = zoom::plan(&req.timeline, &out_words, &req.zoom);
+            if req.burn.enabled && !req.words.is_empty() {
+                let cues = captions::build_cues(&req.words, &req.timeline, &req.captions);
+                let (w, h) = (info.width.unwrap_or(1920), info.height.unwrap_or(1080));
+                effects.subtitles = Some(burn::to_ass(&cues, &req.burn, w, h));
+                effects.fonts_dir = fonts_dir.filter(|d| d.is_dir());
+            }
+        }
+
         let outcome = render::render(
             &paths,
             &info,
             &req.timeline,
             &req.output,
             &req.render,
+            &effects,
             |p| emit(&a, "export", Some(p), format!("Exporting {:.0}%", p * 100.0)),
             Some(cancel),
         )
@@ -341,6 +362,13 @@ async fn export(app: AppHandle, state: State<'_, AppState>, req: ExportRequest) 
 #[tauri::command]
 fn preview_captions(timeline: Timeline, words: Vec<transcript::Word>, captions: CaptionSettings) -> Vec<captions::Cue> {
     captions::build_cues(&words, &timeline, &captions)
+}
+
+/// Punch-in zooms for the current edit, for previewing in the UI.
+#[tauri::command]
+fn preview_zoom(timeline: Timeline, words: Vec<transcript::Word>, captions: CaptionSettings, zoom: ZoomSettings) -> Vec<ZoomSegment> {
+    let out_words = captions::output_words(&words, &timeline, &captions);
+    zoom::plan(&timeline, &out_words, &zoom)
 }
 
 #[tauri::command]
@@ -371,6 +399,7 @@ pub fn run() {
             find_profanity,
             export,
             preview_captions,
+            preview_zoom,
             reveal,
         ])
         .run(tauri::generate_context!())

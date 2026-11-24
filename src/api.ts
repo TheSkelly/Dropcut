@@ -5,6 +5,9 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import type {
   AppInfo,
+  BurnSettings,
+  ZoomSegment,
+  ZoomSettings,
   CaptionSettings,
   Cue,
   MediaInfo,
@@ -58,7 +61,11 @@ export const api = {
     render: RenderSettings;
     captions: CaptionSettings;
     write_srt: boolean;
+    burn: BurnSettings;
+    zoom: ZoomSettings;
   }) => invoke<Exported>("export", { req }),
+  previewZoom: (timeline: Timeline, words: Word[], captions: CaptionSettings, zoom: ZoomSettings) =>
+    invoke<ZoomSegment[]>("preview_zoom", { timeline, words, captions, zoom }),
   previewCaptions: (timeline: Timeline, words: Word[], captions: CaptionSettings) =>
     invoke<Cue[]>("preview_captions", { timeline, words, captions }),
   reveal: (path: string) => invoke<void>("reveal", { path }),

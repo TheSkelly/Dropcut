@@ -34,6 +34,8 @@ mockIPC(async (cmd, args: any) => {
       return args.timeline;
     case "preview_captions":
       return fixture.cues;
+    case "preview_zoom":
+      return args.zoom.enabled ? [{ start: 2.9, end: 6.0, scale: args.zoom.amount }] : [];
     case "export":
       return { output: "/videos/test (DropCut).mp4", srt: "/videos/test (DropCut).srt", encoder: "nvenc", duration: 9.8 };
     case "plugin:dialog|open":

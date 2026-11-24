@@ -68,6 +68,33 @@ export interface CaptionSettings {
   mask_profanity: boolean;
 }
 
+export type CaptionStyle = "clean" | "highlight" | "pop" | "karaoke";
+export type CaptionPosition = "bottom" | "raised" | "center";
+
+export interface BurnSettings {
+  enabled: boolean;
+  style: CaptionStyle;
+  position: CaptionPosition;
+  size: number;
+  highlight: string;
+}
+
+export type ZoomMode = "on_cuts" | "on_sentences";
+
+export interface ZoomSettings {
+  enabled: boolean;
+  mode: ZoomMode;
+  amount: number;
+  min_hold: number;
+  focus_y: number;
+}
+
+export interface ZoomSegment {
+  start: number;
+  end: number;
+  scale: number;
+}
+
 export type VideoEncoder = "auto" | "x264" | "nvenc" | "video_toolbox";
 export type Quality = "draft" | "high" | "max";
 
@@ -118,6 +145,8 @@ export interface Settings {
   profanity: ProfanitySettings;
   captions: CaptionSettings;
   render: RenderSettings;
+  burn: BurnSettings;
+  zoom: ZoomSettings;
   model: string;
   language: string;
   useGpu: boolean;
@@ -129,6 +158,8 @@ export const defaultSettings: Settings = {
   profanity: { enabled: true, mode: "mute", extra_words: [], allowed_words: [], padding: 0.04 },
   captions: { max_chars: 32, max_words: 6, max_duration: 3, break_on_gap: 0.6, uppercase: false, mask_profanity: true },
   render: { encoder: "auto", quality: "high", censor_mode: "mute" },
+  burn: { enabled: false, style: "highlight", position: "raised", size: 1, highlight: "#FFD23F" },
+  zoom: { enabled: false, mode: "on_cuts", amount: 1.15, min_hold: 2, focus_y: 0.4 },
   model: "large-v3-turbo-q5_0",
   language: "auto",
   useGpu: true,

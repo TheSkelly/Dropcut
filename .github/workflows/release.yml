@@ -99,6 +99,13 @@ jobs:
             chmod +x "src-tauri/binaries/$tool-${{ matrix.target }}"
           done
 
+      - name: Check bundled ffmpeg can burn captions
+        shell: bash
+        run: |
+          bin=$(ls src-tauri/binaries/ffmpeg-*)
+          "$bin" -hide_banner -filters | grep -E " subtitles " || { echo "bundled ffmpeg lacks libass"; exit 1; }
+          "$bin" -hide_banner -filters | grep -E " zoompan "
+
       # ---------------------------------------------------------- build
       - run: npm ci
 

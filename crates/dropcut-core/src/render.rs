@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::media::{FfmpegPaths, MediaInfo};
 use crate::profanity::CensorMode;
 use crate::timeline::{Span, Timeline};
+use crate::zoom::{self, ZoomSegment};
 use crate::{Error, Result};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -50,6 +51,25 @@ pub struct RenderSettings {
     pub censor_mode: CensorMode,
 }
 
+/// Picture effects applied after cutting, on the output timeline.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct VideoEffects {
+    /// Punch-in zooms (see [`crate::zoom::plan`]).
+    pub zoom: Vec<ZoomSegment>,
+    /// Vertical zoom focus, 0 = top, 1 = bottom.
+    pub zoom_focus_y: f64,
+    /// A complete ASS script to burn in (see [`crate::burn::to_ass`]).
+    pub subtitles: Option<String>,
+    /// Folder of font files the subtitles use.
+    pub fonts_dir: Option<PathBuf>,
+}
+
+/// File names inside the per-render work folder (ffmpeg runs there, so the
+/// filter graph never has to escape Windows drive letters).
+const SUBS_FILE: &str = "captions.ass";
+const FONTS_DIR: &str = "fonts";
+
 /// ffmpeg's `sine` source peaks at 1/8 full scale; this lifts the bleep to
 /// about -14 dBFS, roughly as loud as normal speech.
 const BLEEP_GAIN: f64 = 1.6;
@@ -60,14 +80,25 @@ fn between_expr(spans: &[Span]) -> String {
 }
 
 /// Build the `-filter_complex` graph. Outputs are labelled `[v]` and `[a]`.
-pub fn build_filter_graph(timeline: &Timeline, info: &MediaInfo, censor_mode: CensorMode) -> String {
+pub fn build_filter_graph(timeline: &Timeline, info: &MediaInfo, censor_mode: CensorMode, effects: &VideoEffects) -> String {
     let kept = timeline.kept();
     let keep = between_expr(&kept);
     let censors = timeline.censors();
     let mut graph = Vec::new();
 
     if info.has_video {
-        graph.push(format!("[0:v:0]select='{keep}',setpts=N/FRAME_RATE/TB[v]"));
+        let mut chain = format!("[0:v:0]select='{keep}',setpts=N/FRAME_RATE/TB");
+        if let (Some(w), Some(h)) = (info.width, info.height) {
+            let fps = info.fps.filter(|f| *f > 1.0 && *f < 241.0).unwrap_or(30.0);
+            if let Some(z) = zoom::zoompan_filter(&effects.zoom, w, h, fps, effects.zoom_focus_y) {
+                chain.push(',');
+                chain.push_str(&z);
+            }
+        }
+        if effects.subtitles.is_some() {
+            chain.push_str(&format!(",subtitles={SUBS_FILE}:fontsdir={FONTS_DIR}"));
+        }
+        graph.push(format!("{chain}[v]"));
     }
 
     if info.has_audio {
@@ -184,6 +215,7 @@ pub fn render(
     timeline: &Timeline,
     output: &Path,
     settings: &RenderSettings,
+    effects: &VideoEffects,
     mut progress: impl FnMut(f64),
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<RenderOutcome> {
@@ -191,12 +223,12 @@ pub fn render(
         return Err(Error::Invalid("everything is cut; nothing left to export".into()));
     }
     let encoder = if info.has_video { resolve_encoder(paths, settings.encoder) } else { VideoEncoder::X264 };
-    match run_ffmpeg(paths, info, timeline, output, settings, encoder, &mut progress, cancel.clone()) {
+    match run_ffmpeg(paths, info, timeline, output, settings, effects, encoder, &mut progress, cancel.clone()) {
         Ok(o) => Ok(o),
         // A hardware encoder can still fail mid-way (driver, unsupported size);
         // fall back to the CPU rather than give up.
         Err(Error::ToolFailed { .. }) if encoder != VideoEncoder::X264 => {
-            run_ffmpeg(paths, info, timeline, output, settings, VideoEncoder::X264, &mut progress, cancel)
+            run_ffmpeg(paths, info, timeline, output, settings, effects, VideoEncoder::X264, &mut progress, cancel)
         }
         Err(e) => Err(e),
     }
@@ -209,19 +241,37 @@ fn run_ffmpeg(
     timeline: &Timeline,
     output: &Path,
     settings: &RenderSettings,
+    effects: &VideoEffects,
     encoder: VideoEncoder,
     progress: &mut dyn FnMut(f64),
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<RenderOutcome> {
-    let graph = build_filter_graph(timeline, info, settings.censor_mode);
-    let script = std::env::temp_dir().join(format!("dropcut-filter-{}.txt", std::process::id()));
-    std::fs::write(&script, &graph)?;
+    let work = WorkDir::new()?;
+    let graph = build_filter_graph(timeline, info, settings.censor_mode, effects);
+    std::fs::write(work.0.join("filter.txt"), &graph)?;
+    if let Some(ass) = &effects.subtitles {
+        std::fs::write(work.0.join(SUBS_FILE), ass)?;
+        let fonts = work.0.join(FONTS_DIR);
+        std::fs::create_dir_all(&fonts)?;
+        if let Some(dir) = &effects.fonts_dir {
+            for entry in std::fs::read_dir(dir)?.flatten() {
+                let p = entry.path();
+                if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf")) {
+                    std::fs::copy(&p, fonts.join(entry.file_name()))?;
+                }
+            }
+        }
+    }
+    // ffmpeg runs inside the work folder, so the media paths must be absolute.
+    let input = std::path::absolute(&info.path)?;
+    let output = std::path::absolute(output)?;
+    let output = output.as_path();
 
     let mut cmd = paths.command(&paths.ffmpeg);
-    cmd.args(["-nostdin", "-y", "-hide_banner", "-v", "error", "-progress", "pipe:1", "-i"])
-        .arg(&info.path)
-        .arg("-filter_complex_script")
-        .arg(&script);
+    cmd.current_dir(&work.0)
+        .args(["-nostdin", "-y", "-hide_banner", "-v", "error", "-progress", "pipe:1", "-i"])
+        .arg(&input)
+        .args(["-filter_complex_script", "filter.txt"]);
     if info.has_video {
         cmd.args(["-map", "[v]"]).args(encoder_args(encoder, settings.quality));
     }
@@ -258,7 +308,6 @@ fn run_ffmpeg(
 
     let status = child.wait()?;
     let err_text = err_reader.join().unwrap_or_default();
-    let _ = std::fs::remove_file(&script);
     if cancelled {
         let _ = std::fs::remove_file(output);
         return Err(Error::Cancelled);
@@ -268,6 +317,26 @@ fn run_ffmpeg(
     }
     progress(1.0);
     Ok(RenderOutcome { output: output.to_path_buf(), encoder, duration: total })
+}
+
+/// A temporary folder removed when dropped.
+struct WorkDir(PathBuf);
+
+impl WorkDir {
+    fn new() -> Result<Self> {
+        use std::sync::atomic::AtomicU32;
+        static N: AtomicU32 = AtomicU32::new(0);
+        let n = N.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("dropcut-render-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(&dir)?;
+        Ok(Self(dir))
+    }
+}
+
+impl Drop for WorkDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 #[cfg(test)]
@@ -287,15 +356,30 @@ mod tests {
 
     #[test]
     fn graph_selects_kept_ranges() {
-        let g = build_filter_graph(&timeline(), &info(true), CensorMode::Mute);
+        let g = build_filter_graph(&timeline(), &info(true), CensorMode::Mute, &VideoEffects::default());
         assert!(g.contains("[0:v:0]select='between(t\\,0.000\\,2.000)+between(t\\,3.000\\,10.000)'"), "{g}");
         assert!(g.contains("[a]") && g.contains("[v]"));
         assert!(!g.contains("volume"));
     }
 
     #[test]
+    fn effects_follow_the_cut() {
+        let fx = VideoEffects {
+            zoom: vec![ZoomSegment { start: 1.0, end: 2.0, scale: 1.2 }],
+            zoom_focus_y: 0.4,
+            subtitles: Some(String::new()),
+            fonts_dir: None,
+        };
+        let g = build_filter_graph(&timeline(), &info(true), CensorMode::Mute, &fx);
+        let v = g.lines().find(|l| l.starts_with("[0:v:0]")).unwrap();
+        let (sel, zp, sub) = (v.find("select=").unwrap(), v.find("zoompan=").unwrap(), v.find("subtitles=").unwrap());
+        assert!(sel < zp && zp < sub, "{v}");
+        assert!(v.trim_end_matches(';').ends_with("subtitles=captions.ass:fontsdir=fonts[v]"), "{v}");
+    }
+
+    #[test]
     fn audio_only_has_no_video_chain() {
-        let g = build_filter_graph(&timeline(), &info(false), CensorMode::Mute);
+        let g = build_filter_graph(&timeline(), &info(false), CensorMode::Mute, &VideoEffects::default());
         assert!(!g.contains("[v]"));
     }
 
@@ -303,7 +387,7 @@ mod tests {
     fn bleep_mixes_a_tone() {
         let mut t = timeline();
         t.add(RegionKind::Profanity, Span::new(5.0, 5.4), None);
-        let g = build_filter_graph(&t, &info(true), CensorMode::Bleep);
+        let g = build_filter_graph(&t, &info(true), CensorMode::Bleep, &VideoEffects::default());
         assert!(g.contains("sine=frequency=1000"));
         assert!(g.contains("amix"));
     }

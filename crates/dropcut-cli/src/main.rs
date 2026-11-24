@@ -4,12 +4,14 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use dropcut_core::burn::{self, BurnSettings, CaptionStyle};
 use dropcut_core::captions::{self, CaptionSettings};
 use dropcut_core::media::{self, FfmpegPaths};
 use dropcut_core::profanity::{self, CensorMode, ProfanitySettings};
-use dropcut_core::render::{self, RenderSettings, VideoEncoder};
+use dropcut_core::render::{self, RenderSettings, VideoEffects, VideoEncoder};
 use dropcut_core::silence::{self, SilenceSettings};
 use dropcut_core::transcript::{self, TranscribeOptions, Transcript};
+use dropcut_core::zoom::{self, ZoomSettings};
 use dropcut_core::{models, RegionKind, Timeline};
 
 const USAGE: &str = "\
@@ -36,6 +38,10 @@ OPTIONS:
   --bleep                  Bleep swear words instead of muting
   --encoder <name>         auto | x264 | nvenc | videotoolbox
   --cpu                    Don't use the GPU for speech recognition
+  --burn <style>           Burn animated captions into the video:
+                           clean | highlight | pop | karaoke
+  --fonts <dir>            Caption font folder (default: next to dropcut)
+  --zoom [amount]          Automatic punch-in zooms (default 1.15)
 ";
 
 #[derive(Default)]
@@ -52,10 +58,13 @@ struct Args {
     profanity: ProfanitySettings,
     encoder: VideoEncoder,
     cpu: bool,
+    burn: Option<CaptionStyle>,
+    fonts: Option<PathBuf>,
+    zoom: Option<f64>,
 }
 
 fn parse_args() -> Result<Args, String> {
-    let mut raw = std::env::args().skip(1);
+    let mut raw = std::env::args().skip(1).peekable();
     let mut a = Args { command: raw.next().unwrap_or_default(), ..Default::default() };
     let mut positional = Vec::new();
     while let Some(arg) = raw.next() {
@@ -78,6 +87,27 @@ fn parse_args() -> Result<Args, String> {
             "--no-profanity" => a.profanity.enabled = false,
             "--bleep" => a.profanity.mode = CensorMode::Bleep,
             "--cpu" => a.cpu = true,
+            "--burn" => {
+                a.burn = Some(match value(&arg)?.as_str() {
+                    "clean" => CaptionStyle::Clean,
+                    "highlight" => CaptionStyle::Highlight,
+                    "pop" => CaptionStyle::Pop,
+                    "karaoke" => CaptionStyle::Karaoke,
+                    other => return Err(format!("unknown caption style {other}")),
+                })
+            }
+            "--fonts" => a.fonts = Some(value(&arg)?.into()),
+            "--zoom" => {
+                // Optional numeric amount right after the flag.
+                let next = raw.peek().cloned();
+                match next.as_deref().and_then(|v| v.parse::<f64>().ok()) {
+                    Some(v) => {
+                        raw.next();
+                        a.zoom = Some(v);
+                    }
+                    None => a.zoom = Some(1.15),
+                }
+            }
             "--encoder" => {
                 a.encoder = match value(&arg)?.as_str() {
                     "auto" => VideoEncoder::Auto,
@@ -228,7 +258,23 @@ fn run(a: Args) -> Result<(), String> {
 
             let output = a.output.clone().ok_or("missing -o <output>")?;
             let settings = RenderSettings { encoder: a.encoder, censor_mode: a.profanity.mode, ..Default::default() };
-            let outcome = render::render(&paths, &info, &timeline, &output, &settings, |p| eprint!("\r  rendering {:>3.0}%", p * 100.0), None)
+            let caption_settings = CaptionSettings::default();
+            let out_words = transcript.as_ref().map(|t| captions::output_words(&t.words, &timeline, &caption_settings)).unwrap_or_default();
+            let mut effects = VideoEffects { zoom_focus_y: 0.4, ..Default::default() };
+            if let Some(amount) = a.zoom {
+                let zs = ZoomSettings { enabled: true, amount, ..Default::default() };
+                effects.zoom = zoom::plan(&timeline, &out_words, &zs);
+                eprintln!("{} punch-in zooms", effects.zoom.len());
+            }
+            if let (Some(style), Some(t)) = (a.burn, &transcript) {
+                let cues = captions::build_cues(&t.words, &timeline, &caption_settings);
+                let bs = BurnSettings { enabled: true, style, ..Default::default() };
+                effects.subtitles = Some(burn::to_ass(&cues, &bs, info.width.unwrap_or(1920), info.height.unwrap_or(1080)));
+                effects.fonts_dir = a.fonts.clone().or_else(|| {
+                    std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("fonts"))).filter(|d| d.is_dir())
+                });
+            }
+            let outcome = render::render(&paths, &info, &timeline, &output, &settings, &effects, |p| eprint!("\r  rendering {:>3.0}%", p * 100.0), None)
                 .map_err(|e| e.to_string())?;
             eprintln!("\nWrote {} ({:?})", outcome.output.display(), outcome.encoder);
 

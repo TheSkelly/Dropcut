@@ -1,3 +1,9 @@
+@font-face {
+  font-family: "Poppins";
+  font-weight: 800;
+  src: url("../src-tauri/resources/fonts/Poppins-ExtraBold.ttf") format("truetype");
+}
+
 :root {
   --bg: #f4f4f6;
   --surface: #ffffff;
@@ -478,24 +484,59 @@ input[type="checkbox"] {
 }
 .caption-overlay {
   position: absolute;
-  bottom: 9%;
   left: 50%;
   transform: translateX(-50%);
   max-width: 86%;
   text-align: center;
+  font-family: "Poppins", system-ui, sans-serif;
   font-weight: 800;
-  font-size: clamp(16px, 3.2vw, 34px);
+  font-size: calc(clamp(16px, 3.4vw, 40px) * var(--cap-scale, 1));
   line-height: 1.2;
   color: #fff;
-  text-shadow: 0 2px 0 #000, 0 0 8px rgba(0, 0, 0, 0.8);
+  text-shadow: 0 0 3px #000, 0 2px 0 #000, 2px 0 0 #000, -2px 0 0 #000, 0 -2px 0 #000;
   pointer-events: none;
 }
-.caption-overlay span {
-  opacity: 0.75;
+.caption-overlay.pos-bottom {
+  bottom: 7%;
 }
-.caption-overlay span.spoken {
+.caption-overlay.pos-raised {
+  bottom: 22%;
+}
+.caption-overlay.pos-center {
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+/* Unburned preview: subtle, shows what the .srt will say. */
+.caption-overlay.style-preview span {
+  opacity: 0.8;
+}
+.caption-overlay.style-preview span.current,
+.caption-overlay.style-preview span.spoken {
   opacity: 1;
-  color: #ffd23f;
+}
+.caption-overlay.style-highlight span.current,
+.caption-overlay.style-pop span.current {
+  color: var(--hl);
+}
+.caption-overlay.style-pop {
+  letter-spacing: 0.01em;
+}
+.caption-overlay.style-pop span {
+  /* inline-block (needed for the scale) swallows the trailing space */
+  display: inline-block;
+  margin: 0 0.12em;
+  transition: transform 0.06s;
+}
+.caption-overlay.style-pop span.current {
+  transform: scale(1.12);
+  margin: 0 0.24em;
+}
+.caption-overlay.style-karaoke span.spoken,
+.caption-overlay.style-karaoke span.current {
+  color: var(--hl);
+}
+.screen video {
+  transition: none;
 }
 .transport {
   display: flex;
@@ -716,4 +757,60 @@ input[type="checkbox"] {
   .legend {
     display: none;
   }
+}
+
+/* ---------------------------------------------------------------- caption styles */
+
+.style-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 6px 0 8px;
+}
+.style-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 8px 10px;
+  text-align: left;
+}
+.style-card.on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+.style-card small {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+}
+.sample {
+  font-family: "Poppins", system-ui, sans-serif;
+  font-weight: 800;
+  font-size: 15px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #222;
+  color: #fff;
+}
+.sample-highlight,
+.sample-karaoke {
+  color: #ffd23f;
+}
+.sample-karaoke {
+  background: linear-gradient(90deg, #222 0 55%, #222 55%);
+  -webkit-text-stroke: 0;
+}
+.sample-pop {
+  color: #ffd23f;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+}
+input[type="color"] {
+  width: 44px;
+  height: 28px;
+  padding: 0 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
 }

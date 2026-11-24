@@ -34,7 +34,14 @@ once in Terminal: `xattr -cr /Applications/DropCut.app`.
 5. **Profanity.** Swear words are found automatically, highlighted in yellow,
    and masked in captions (`f***`). Choose *Mute* or *Bleep*, add your own
    words, or allow ones you don't mind. Click a chip to leave one uncensored.
-6. **Export.** You get an MP4 plus a matching `.srt` caption file (upload it to
+6. **Burned-in captions (optional).** Tick *Burn animated captions* and pick a
+   style: *Clean*, *Highlight* (spoken word lights up), *Pop* (bold, word pops)
+   or *Karaoke* (words fill as spoken). Choose position, size and colour; the
+   preview shows the style live.
+7. **Auto zoom (optional).** Punches in and out automatically, either at each
+   cut or at sentence starts, so jump cuts look intentional. Set how far to
+   zoom, how long to hold each framing, and where faces sit in your shots.
+8. **Export.** You get an MP4 plus a matching `.srt` caption file (upload it to
    YouTube/TikTok, or drop it on your Premiere/Resolve timeline). Export uses
    the NVIDIA or Apple hardware encoder when available.
 
@@ -45,7 +52,7 @@ Your settings are remembered between sessions.
 | Phase | Features | Status |
 |---|---|---|
 | 1 | Silence removal, transcription + editable captions, profanity filter, installers | **Done** |
-| 2 | Animated burned-in captions (word highlight styles), auto zoom / punch-ins | Next |
+| 2 | Animated burned-in captions (4 styles), auto zoom / punch-ins | **Done** |
 | 3 | Bad-take (repeat) removal, chapters, viral short finder (9:16 reframe), B-roll from Pexels | Planned |
 | 4 | Podcast mode: multi-track speaker detection and automatic camera switching | Planned |
 | + | Premiere / Resolve XML export so edits stay editable | Planned |

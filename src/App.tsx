@@ -22,6 +22,7 @@ import {
   type Settings,
   type Timeline,
   type Transcript,
+  type ZoomSegment,
 } from "./types";
 
 const SETTINGS_KEY = "dropcut.settings.v1";
@@ -38,6 +39,8 @@ function loadSettings(): Settings {
       profanity: { ...defaultSettings.profanity, ...s.profanity },
       captions: { ...defaultSettings.captions, ...s.captions },
       render: { ...defaultSettings.render, ...s.render },
+      burn: { ...defaultSettings.burn, ...s.burn },
+      zoom: { ...defaultSettings.zoom, ...s.zoom },
     };
   } catch {
     return defaultSettings;
@@ -74,6 +77,7 @@ export default function App() {
   const [threshold, setThreshold] = useState<number | null>(null);
   const [transcript, setTranscript] = useState<Transcript | null>(null);
   const [cues, setCues] = useState<Cue[]>([]);
+  const [zoomSegments, setZoomSegments] = useState<ZoomSegment[]>([]);
   const [busy, setBusy] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exported, setExported] = useState<Exported | null>(null);
@@ -240,6 +244,20 @@ export default function App() {
     return () => clearTimeout(id);
   }, [timeline, words, captionKey, settings.captions]);
 
+  // Zoom plan follows every edit too.
+  const zoomKey = JSON.stringify(settings.zoom);
+  useEffect(() => {
+    if (!inTauri || !info || !settings.zoom.enabled) {
+      setZoomSegments((z) => (z.length ? [] : z));
+      return;
+    }
+    const id = setTimeout(() => {
+      api.previewZoom(timeline, words, settings.captions, settings.zoom).then(setZoomSegments).catch(() => {});
+    }, 120);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeline, words, zoomKey, captionKey, info]);
+
   // ------------------------------------------------------------ export
 
   const doExport = async () => {
@@ -254,6 +272,8 @@ export default function App() {
         render: { ...settings.render, censor_mode: settings.profanity.mode },
         captions: settings.captions,
         write_srt: settings.writeSrt,
+        burn: settings.burn,
+        zoom: settings.zoom,
       }),
     );
     if (result) setExported(result);
@@ -385,6 +405,9 @@ export default function App() {
               cues={cues}
               previewEdits={previewEdits}
               outputDuration={outDur}
+              zoom={zoomSegments}
+              zoomFocusY={settings.zoom.focus_y}
+              burn={settings.burn}
               onTime={onTime}
             />
             <Waveform
@@ -522,6 +545,68 @@ export default function App() {
               <button className="primary wide" disabled={!!busy} onClick={transcribe}>
                 {transcript ? "Transcribe again" : selectedModel && !selectedModel.downloaded ? "Download model & transcribe" : "Transcribe"}
               </button>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={settings.burn.enabled}
+                  onChange={(e) => update("burn", { ...settings.burn, enabled: e.target.checked })}
+                />
+                Burn animated captions into the video
+              </label>
+              {settings.burn.enabled && (
+                <>
+                  <div className="style-grid" role="radiogroup" aria-label="Caption style">
+                    {(
+                      [
+                        ["clean", "Clean", "Whole line, white"],
+                        ["highlight", "Highlight", "Spoken word lights up"],
+                        ["pop", "Pop", "Bold, punchy, word pops"],
+                        ["karaoke", "Karaoke", "Words fill as spoken"],
+                      ] as const
+                    ).map(([id, name, hint]) => (
+                      <button
+                        key={id}
+                        role="radio"
+                        aria-checked={settings.burn.style === id}
+                        className={`style-card ${settings.burn.style === id ? "on" : ""}`}
+                        onClick={() => update("burn", { ...settings.burn, style: id })}
+                      >
+                        <b className={`sample sample-${id}`}>{id === "pop" ? "WORD" : "Word"}</b>
+                        <span>{name}</span>
+                        <small>{hint}</small>
+                      </button>
+                    ))}
+                  </div>
+                  <label className="row">
+                    <span>Position</span>
+                    <select
+                      value={settings.burn.position}
+                      onChange={(e) => update("burn", { ...settings.burn, position: e.target.value as Settings["burn"]["position"] })}
+                    >
+                      <option value="raised">Lower third (best for Shorts/Reels)</option>
+                      <option value="bottom">Bottom</option>
+                      <option value="center">Center</option>
+                    </select>
+                  </label>
+                  <Slider
+                    label="Caption size"
+                    value={settings.burn.size}
+                    min={0.6}
+                    max={1.8}
+                    step={0.05}
+                    format={(v) => `${Math.round(v * 100)}%`}
+                    onChange={(v) => update("burn", { ...settings.burn, size: v })}
+                  />
+                  <label className="row">
+                    <span>Highlight</span>
+                    <input
+                      type="color"
+                      value={settings.burn.highlight}
+                      onChange={(e) => update("burn", { ...settings.burn, highlight: e.target.value.toUpperCase() })}
+                    />
+                  </label>
+                </>
+              )}
               <Slider
                 label="Words per caption"
                 value={settings.captions.max_words}
@@ -543,6 +628,74 @@ export default function App() {
                 <input type="checkbox" checked={settings.writeSrt} onChange={(e) => update("writeSrt", e.target.checked)} />
                 Save an .srt caption file with the export
               </label>
+            </section>
+
+            <section className="panel">
+              <div className="panel-head">
+                <h2>Auto zoom</h2>
+                {settings.zoom.enabled && <span className="badge">{zoomSegments.length} punch-ins</span>}
+              </div>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={settings.zoom.enabled}
+                  onChange={(e) => update("zoom", { ...settings.zoom, enabled: e.target.checked })}
+                />
+                Punch in automatically
+              </label>
+              {settings.zoom.enabled && (
+                <>
+                  <div className="segmented" role="radiogroup" aria-label="When to zoom">
+                    {(
+                      [
+                        ["on_cuts", "At cuts"],
+                        ["on_sentences", "At sentences"],
+                      ] as const
+                    ).map(([id, name]) => (
+                      <button
+                        key={id}
+                        role="radio"
+                        aria-checked={settings.zoom.mode === id}
+                        className={settings.zoom.mode === id ? "on" : ""}
+                        onClick={() => update("zoom", { ...settings.zoom, mode: id })}
+                      >
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                  {settings.zoom.mode === "on_sentences" && !transcript && (
+                    <p className="muted small">Transcribe first so DropCut knows where sentences start.</p>
+                  )}
+                  <Slider
+                    label="Zoom amount"
+                    value={settings.zoom.amount}
+                    min={1.05}
+                    max={1.5}
+                    step={0.01}
+                    format={(v) => `${Math.round((v - 1) * 100)}% closer`}
+                    onChange={(v) => update("zoom", { ...settings.zoom, amount: v })}
+                  />
+                  <Slider
+                    label="Hold each framing at least"
+                    value={settings.zoom.min_hold}
+                    min={0.8}
+                    max={8}
+                    step={0.1}
+                    format={(v) => `${v.toFixed(1)}s`}
+                    onChange={(v) => update("zoom", { ...settings.zoom, min_hold: v })}
+                  />
+                  <Slider
+                    label="Zoom toward"
+                    value={settings.zoom.focus_y}
+                    min={0.2}
+                    max={0.7}
+                    step={0.01}
+                    format={(v) => (v < 0.35 ? "upper frame" : v > 0.55 ? "lower frame" : "face height")}
+                    hint="Where faces usually sit in your shots."
+                    onChange={(v) => update("zoom", { ...settings.zoom, focus_y: v })}
+                  />
+                </>
+              )}
             </section>
 
             <section className="panel">
