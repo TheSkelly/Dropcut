@@ -50,6 +50,12 @@ once in Terminal: `xattr -cr /Applications/DropCut.app`.
    scorer, or by Claude if you paste an Anthropic API key (only the transcript
    text is sent). Command line: `dropcut shorts input.mp4 -o shorts/ --count 5`
    (`--no-follow` for a fixed crop; set `ANTHROPIC_API_KEY` to use Claude; `--list` previews the picks).
+   **Scheduling with Metricool.** Every exported short is also recorded in
+   `dropcut-publish.json` in the same folder: a ready caption (the opening line
+   plus hashtags taken from what was said), the length, and where it came from.
+   Export into a folder that syncs with Google Drive or Dropbox, link that
+   account in Metricool (Metricool imports media from there), then schedule the
+   clips from the manifest in Metricool, or ask Claude to do it for you.
 9. **Export.** You get an MP4 plus a matching `.srt` caption file (upload it to
    YouTube/TikTok, or drop it on your Premiere/Resolve timeline). Export uses
    the NVIDIA or Apple hardware encoder when available.

@@ -332,10 +332,15 @@ fn run_shorts(a: &Args, paths: &FfmpegPaths) -> Result<(), String> {
         let outcome = render::render(paths, &info, &timeline, &out, &settings, &effects, |p| eprint!("\r  clip {}/{} {:>3.0}%", i + 1, picks.len(), p * 100.0), None)
             .map_err(|e| e.to_string())?;
         eprintln!("\nWrote {} ({:.1}s)", outcome.output.display(), outcome.duration);
+        let file_name = outcome.output.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let entry = dropcut_core::publish::entry_for(&file_name, c, &transcript.words, outcome.duration);
+        if let Err(e) = dropcut_core::publish::record(&out_dir, &stem, entry) {
+            eprintln!("  could not update {}: {e}", dropcut_core::publish::MANIFEST_FILE);
+        }
         written.push(outcome.output);
     }
     std::fs::write(out_dir.join("shorts.json"), serde_json::to_string_pretty(&picks).unwrap()).map_err(|e| e.to_string())?;
-    eprintln!("Done: {} shorts in {}", written.len(), out_dir.display());
+    eprintln!("Done: {} shorts in {} (captions and hashtags in {})", written.len(), out_dir.display(), dropcut_core::publish::MANIFEST_FILE);
     Ok(())
 }
 

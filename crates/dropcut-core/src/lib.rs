@@ -10,6 +10,7 @@
 //! * [`profanity`]: finding and masking swear words
 //! * [`captions`]: grouping words into caption lines and writing SRT
 //! * [`burn`]: animated captions burned into the video (ASS)
+//! * [`publish`]: captions, hashtags and the manifest a scheduler reads
 //! * [`reframe`]: finding and following the speaker's face for 9:16 crops
 //! * [`zoom`]: automatic punch-in zooms
 //! * [`shorts`]: finding the best short clips and framing them 9:16
@@ -22,6 +23,7 @@ pub mod error;
 pub mod media;
 pub mod models;
 pub mod profanity;
+pub mod publish;
 pub mod reframe;
 pub mod render;
 pub mod shorts;

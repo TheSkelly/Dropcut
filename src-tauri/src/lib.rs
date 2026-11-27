@@ -495,6 +495,15 @@ async fn export_short(app: AppHandle, state: State<'_, AppState>, req: ExportSho
             Some(cancel),
         )
         .map_err(err)?;
+        // Record caption + hashtags for the scheduler hand-off; never fail the export over it.
+        if let Some(dir) = outcome.output.parent() {
+            let file = outcome.output.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let src_name = source.file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            let entry = dropcut_core::publish::entry_for(&file, &req.pick, &req.words, outcome.duration);
+            if let Err(e) = dropcut_core::publish::record(dir, &src_name, entry) {
+                note.get_or_insert_with(|| format!("Couldn't update {} ({e}).", dropcut_core::publish::MANIFEST_FILE));
+            }
+        }
         emit(&a, "export", Some(1.0), "Done");
         Ok(Exported { output: outcome.output, srt: None, encoder: outcome.encoder, duration: outcome.duration, note })
     })
