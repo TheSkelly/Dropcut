@@ -327,22 +327,62 @@ pub const OUT_W: u32 = 1080;
 pub const OUT_H: u32 = 1920;
 
 /// How to turn a landscape (or any) frame into 9:16.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct Vertical {
-    /// Horizontal crop position: 0 = left edge, 0.5 = centre, 1 = right edge.
+    /// Static crop position: 0 = left edge, 0.5 = centre, 1 = right edge.
+    /// Used when there is no face `track`.
     pub focus_x: f64,
+    /// Camera path on the *output* timeline: `(seconds, centre_x 0..1)`.
+    /// When it has two or more points the crop pans to follow it.
+    #[serde(skip)]
+    pub track: Vec<(f64, f64)>,
 }
 
 impl Default for Vertical {
     fn default() -> Self {
-        Self { focus_x: 0.5 }
+        Self { focus_x: 0.5, track: Vec::new() }
     }
 }
 
-/// ffmpeg filters that crop a `src_w`x`src_h` frame to 9:16 around `focus_x`
-/// and scale to 1080x1920. Sources already narrower than 9:16 are cropped
-/// vertically instead of letterboxed.
+/// Pixel x of the crop window for a subject centred at `cx` (0..1).
+fn crop_x(cx: f64, src_w: u32, cw: u32) -> f64 {
+    (cx * src_w as f64 - cw as f64 / 2.0).clamp(0.0, (src_w - cw) as f64)
+}
+
+/// ffmpeg expression for the crop's x position over time `t`: the starting
+/// position plus a clamped linear ramp per move. A flat sum (no nesting) keeps
+/// it valid for long clips; keys that merely repeat a held position are dropped.
+fn pan_expression(track: &[(f64, f64)], src_w: u32, cw: u32) -> String {
+    let pts: Vec<(f64, f64)> = track.iter().map(|(t, c)| (*t, crop_x(*c, src_w, cw))).collect();
+    let moves = |a: f64, b: f64| (a - b).abs() >= 2.0;
+    let keep: Vec<(f64, f64)> = pts
+        .iter()
+        .enumerate()
+        .filter(|(i, (_, x))| {
+            *i == 0
+                || *i + 1 == pts.len()
+                || moves(*x, pts[i - 1].1)
+                || moves(*x, pts[i + 1].1)
+        })
+        .map(|(_, p)| *p)
+        .collect();
+    let mut expr = format!("{:.1}", keep[0].1);
+    for w in keep.windows(2) {
+        let ((t0, x0), (t1, x1)) = (w[0], w[1]);
+        let dx = x1 - x0;
+        if dx.abs() < 0.5 {
+            continue;
+        }
+        let dt = (t1 - t0).max(0.05);
+        expr.push_str(&format!("+({dx:.1})*clip((t-{t0:.3})/{dt:.3}\\,0\\,1)"));
+    }
+    expr
+}
+
+/// ffmpeg filters that crop a `src_w`x`src_h` frame to 9:16 and scale to
+/// 1080x1920. The crop follows `v.track` if present, else sits at `v.focus_x`.
+/// Sources already narrower than 9:16 are cropped vertically instead of letterboxed.
 pub fn vertical_filter(src_w: u32, src_h: u32, v: &Vertical) -> String {
     let ratio = OUT_W as f64 / OUT_H as f64;
     let (cw, ch) = if src_w as f64 / src_h as f64 > ratio {
@@ -352,9 +392,14 @@ pub fn vertical_filter(src_w: u32, src_h: u32, v: &Vertical) -> String {
     };
     let cw = cw.min(src_w);
     let ch = ch.min(src_h);
-    let x = ((src_w - cw) as f64 * v.focus_x.clamp(0.0, 1.0)).round() as u32;
     let y = (src_h - ch) / 2;
-    format!("crop={cw}:{ch}:{x}:{y},scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1")
+    let scale = format!("scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1");
+    if cw < src_w && v.track.len() >= 2 {
+        let x = pan_expression(&v.track, src_w, cw);
+        return format!("crop={cw}:{ch}:x='{x}':y={y},{scale}");
+    }
+    let x = ((src_w - cw) as f64 * v.focus_x.clamp(0.0, 1.0)).round() as u32;
+    format!("crop={cw}:{ch}:{x}:{y},{scale}")
 }
 
 #[cfg(test)]
@@ -477,8 +522,35 @@ mod tests {
     fn vertical_filter_crops_landscape_around_focus() {
         let f = vertical_filter(1920, 1080, &Vertical::default());
         assert_eq!(f, "crop=608:1080:656:0,scale=1080:1920:flags=lanczos,setsar=1");
-        assert!(vertical_filter(1920, 1080, &Vertical { focus_x: 0.0 }).starts_with("crop=608:1080:0:0"));
-        assert!(vertical_filter(1920, 1080, &Vertical { focus_x: 9.0 }).starts_with("crop=608:1080:1312:0"));
+        assert!(vertical_filter(1920, 1080, &Vertical { focus_x: 0.0, ..Default::default() }).starts_with("crop=608:1080:0:0"));
+        assert!(vertical_filter(1920, 1080, &Vertical { focus_x: 9.0, ..Default::default() }).starts_with("crop=608:1080:1312:0"));
+    }
+
+    #[test]
+    fn vertical_filter_pans_along_the_track() {
+        let v = Vertical { focus_x: 0.5, track: vec![(0.0, 0.3), (2.0, 0.3), (4.0, 0.7), (6.0, 0.7)] };
+        let f = vertical_filter(1920, 1080, &v);
+        // crop is 608 wide: x(0.3)=576-304=272, x(0.7)=1344-304=1040
+        assert!(f.starts_with("crop=608:1080:x='272.0+(768.0)*clip((t-2.000)/2.000\\,0\\,1)':y=0,"), "{f}");
+        assert!(f.ends_with("scale=1080:1920:flags=lanczos,setsar=1"), "{f}");
+    }
+
+    #[test]
+    fn pan_clamps_to_the_frame_and_skips_held_keys() {
+        // Subject at the far edge cannot push the crop outside the picture.
+        let e = pan_expression(&[(0.0, 0.0), (1.0, 0.0), (2.0, 1.0)], 1920, 608);
+        assert!(e.starts_with("0.0+(1312.0)*"), "{e}");
+        // A long hold in the middle contributes no terms of its own.
+        let held: Vec<(f64, f64)> = (0..50).map(|i| (i as f64, 0.5)).collect();
+        assert_eq!(pan_expression(&held, 1920, 608), "656.0");
+    }
+
+    #[test]
+    fn single_point_or_portrait_falls_back_to_static() {
+        let one = Vertical { focus_x: 0.5, track: vec![(0.0, 0.2)] };
+        assert!(vertical_filter(1920, 1080, &one).starts_with("crop=608:1080:656:0,"));
+        let tracked = Vertical { focus_x: 0.5, track: vec![(0.0, 0.2), (1.0, 0.9)] };
+        assert!(vertical_filter(1080, 1920, &tracked).starts_with("crop=1080:1920:0:0,"), "portrait has nothing to pan");
     }
 
     #[test]

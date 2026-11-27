@@ -38,6 +38,8 @@ export interface Exported {
   srt: string | null;
   encoder: VideoEncoder;
   duration: number;
+  /** Something worth telling the user, e.g. face tracking fell back to a fixed crop. */
+  note?: string | null;
 }
 
 export const api = {
@@ -84,6 +86,7 @@ export const api = {
     profanity: ProfanitySettings;
     tighten: boolean;
     focus_x: number;
+    follow_face: boolean;
   }) => invoke<Exported>("export_short", { req }),
   previewZoom: (timeline: Timeline, words: Word[], captions: CaptionSettings, zoom: ZoomSettings) =>
     invoke<ZoomSegment[]>("preview_zoom", { timeline, words, captions, zoom }),

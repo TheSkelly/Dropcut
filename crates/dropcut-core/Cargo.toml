@@ -12,6 +12,8 @@ vulkan = ["whisper", "whisper-rs/vulkan"]
 cuda = ["whisper", "whisper-rs/cuda"]
 metal = ["whisper", "whisper-rs/metal"]
 download = ["dep:ureq"]
+# Face detection for following the speaker in vertical shorts (pure Rust, no native libs).
+faces = ["dep:tract-onnx"]
 
 [dependencies]
 serde.workspace = true
@@ -19,3 +21,4 @@ serde_json.workspace = true
 thiserror.workspace = true
 whisper-rs = { workspace = true, optional = true }
 ureq = { workspace = true, optional = true }
+tract-onnx = { version = "0.21", optional = true }

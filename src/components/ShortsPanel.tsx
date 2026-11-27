@@ -12,7 +12,7 @@ interface Props {
   busy: boolean;
   run: Run;
   onSeek: (t: number) => void;
-  onDone: (folder: string, count: number, sampleFile: string) => void;
+  onDone: (folder: string, count: number, sampleFile: string, notes: string[]) => void;
 }
 
 const KEY_STORAGE = "dropcut.anthropicKey";
@@ -26,6 +26,7 @@ export function ShortsPanel({ info, words, settings, busy, run, onSeek, onDone }
   const [minLen, setMinLen] = useState(20);
   const [maxLen, setMaxLen] = useState(75);
   const [focusX, setFocusX] = useState(0.5);
+  const [follow, setFollow] = useState(true);
   const [tighten, setTighten] = useState(true);
   const [apiKey, setApiKey] = useState("");
   const [remember, setRemember] = useState(false);
@@ -88,6 +89,7 @@ export function ShortsPanel({ info, words, settings, busy, run, onSeek, onDone }
     const todo = picks.map((p, i) => ({ p, i })).filter(({ i }) => chosen.has(i));
     let done = 0;
     let sample = "";
+    const notes = new Set<string>();
     for (const { p, i } of todo) {
       const name = `${stem}_${String(i + 1).padStart(2, "0")}_${slug(p.title)}.mp4`;
       const r = await run("export", `Exporting short ${done + 1} of ${todo.length}`, () =>
@@ -101,13 +103,15 @@ export function ShortsPanel({ info, words, settings, busy, run, onSeek, onDone }
           profanity: settings.profanity,
           tighten,
           focus_x: focusX,
+          follow_face: follow,
         }),
       );
       if (!r) return; // cancelled or failed; the error banner explains
       done += 1;
       sample = r.output;
+      if (r.note) notes.add(r.note);
     }
-    onDone(folder, done, sample);
+    onDone(folder, done, sample, [...notes]);
   };
 
   const noVideo = !info.has_video;
@@ -135,13 +139,21 @@ export function ShortsPanel({ info, words, settings, busy, run, onSeek, onDone }
               <input type="number" min={10} max={180} value={maxLen} onChange={(e) => setMaxLen(Number(e.target.value) || 75)} />
             </span>
           </label>
+          <label className="check">
+            <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} />
+            Follow the speaker's face
+          </label>
           <label className="slider">
             <span className="slider-head">
-              <span>Crop position</span>
+              <span>{follow ? "Fallback crop position" : "Crop position"}</span>
               <output>{focusX < 0.4 ? "left" : focusX > 0.6 ? "right" : "centre"}</output>
             </span>
             <input type="range" min={0} max={1} step={0.05} value={focusX} onChange={(e) => setFocusX(Number(e.target.value))} />
-            <small className="muted">Where the 9:16 frame sits on a wide video. Put the speaker in it.</small>
+            <small className="muted">
+              {follow
+                ? "Used only when no face is found."
+                : "Where the 9:16 frame sits on a wide video. Put the speaker in it."}
+            </small>
           </label>
           <label className="check">
             <input type="checkbox" checked={tighten} onChange={(e) => setTighten(e.target.checked)} />

@@ -9,7 +9,8 @@ name = "dropcut"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["faces"]
+faces = ["dropcut-core/faces"]
 whisper = ["dropcut-core/whisper", "dropcut-core/download"]
 
 [dependencies]

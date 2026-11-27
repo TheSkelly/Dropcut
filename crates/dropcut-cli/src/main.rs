@@ -50,7 +50,8 @@ SHORTS OPTIONS (dropcut shorts):
   --min-len <secs>         Shortest clip (default 20)
   --max-len <secs>         Longest clip (default 75)
   --words <words.json>     Reuse a transcript from `dropcut transcribe` (skips speech recognition)
-  --focus-x <0..1>         Horizontal crop position for 9:16 (default 0.5 = centre)
+  --focus-x <0..1>         Crop position when no face is found (default 0.5 = centre)
+  --no-follow              Don't follow the speaker's face; use a fixed crop
   --llm-model <id>         Claude model for picking clips (default claude-sonnet-5-5)
   --list                   Only list the chosen moments (JSON); don't render
   Set ANTHROPIC_API_KEY to let Claude pick the moments; without it an offline
@@ -77,6 +78,7 @@ struct Args {
     shorts: ShortsSettings,
     words_file: Option<PathBuf>,
     focus_x: f64,
+    no_follow: bool,
     llm_model: Option<String>,
     list_only: bool,
 }
@@ -121,6 +123,7 @@ fn parse_args() -> Result<Args, String> {
             "--focus-x" => a.focus_x = num(value(&arg)?, &arg)?.clamp(0.0, 1.0),
             "--llm-model" => a.llm_model = Some(value(&arg)?),
             "--list" => a.list_only = true,
+            "--no-follow" => a.no_follow = true,
             "--fonts" => a.fonts = Some(value(&arg)?.into()),
             "--zoom" => {
                 // Optional numeric amount right after the flag.
@@ -279,6 +282,19 @@ fn run_shorts(a: &Args, paths: &FfmpegPaths) -> Result<(), String> {
         std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("fonts"))).filter(|d| d.is_dir())
     });
 
+    #[cfg(feature = "faces")]
+    let mut detector = if a.no_follow {
+        None
+    } else {
+        match dropcut_core::reframe::UltraFace::new() {
+            Ok(d) => Some(d),
+            Err(e) => {
+                eprintln!("Face tracking unavailable ({e}); using a fixed crop.");
+                None
+            }
+        }
+    };
+
     let mut written = Vec::new();
     for (i, c) in picks.iter().enumerate() {
         // Everything outside the pick is cut; pauses inside it are tightened.
@@ -286,11 +302,27 @@ fn run_shorts(a: &Args, paths: &FfmpegPaths) -> Result<(), String> {
         let mut timeline = shorts::clip_timeline(info.duration, c, &silences);
         timeline.replace_kind(RegionKind::Profanity, profanity::find(&transcript.words, &a.profanity));
 
+        let mut vertical = Vertical { focus_x: a.focus_x, ..Default::default() };
+        #[cfg(feature = "faces")]
+        if let Some(det) = detector.as_mut() {
+            eprintln!("  clip {}/{}: following the speaker ...", i + 1, picks.len());
+            match dropcut_core::reframe::track_faces(paths, &input, c.start, c.end, det, 3.0, |_| {}) {
+                Ok(t) if t.is_usable() => {
+                    eprintln!("  face found in {}/{} frames", t.with_faces, t.frames);
+                    vertical.track = dropcut_core::reframe::to_output_keys(&t.path, &timeline);
+                }
+                Ok(t) => eprintln!("  no steady face ({}/{} frames); using a fixed crop", t.with_faces, t.frames),
+                Err(e) => eprintln!("  face tracking failed ({e}); using a fixed crop"),
+            }
+        }
+        #[cfg(not(feature = "faces"))]
+        let _ = a.no_follow;
+
         let cues = captions::build_cues(&transcript.words, &timeline, &caption_settings);
         let bs = BurnSettings { enabled: true, style, ..Default::default() };
         let effects = VideoEffects {
             zoom_focus_y: 0.4,
-            vertical: Some(Vertical { focus_x: a.focus_x }),
+            vertical: Some(vertical),
             subtitles: Some(burn::to_ass(&cues, &bs, shorts::OUT_W, shorts::OUT_H)),
             fonts_dir: fonts.clone(),
             ..Default::default()

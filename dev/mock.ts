@@ -49,7 +49,7 @@ mockIPC(async (cmd, args: any) => {
         note: args.req.api_key ? null : "Showing the offline picker (no API key).",
       };
     case "export_short":
-      return { output: args.req.output, srt: null, encoder: "x264", duration: 35.5 };
+      return { output: args.req.output, srt: null, encoder: "x264", duration: 35.5, note: null };
     case "plugin:dialog|open":
       return "/videos/test.mp4";
     case "plugin:event|listen":

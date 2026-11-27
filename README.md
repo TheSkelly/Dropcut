@@ -44,11 +44,12 @@ once in Terminal: `xattr -cr /Applications/DropCut.app`.
 8. **Shorts (optional).** Open the **Shorts** panel after transcribing. It finds
    the best 20 to 75 second moments (strong hook, complete thought), you tick
    the ones you like, and it exports each as a 1080x1920 vertical video with
-   burned-in captions and pauses tightened. Pick where the 9:16 frame sits on
-   a wide video with *Crop position*. Moments are chosen by a free offline
+   burned-in captions and pauses tightened. The 9:16 frame follows the speaker's face
+   (*Follow the speaker's face*, on by default); if no steady face is found it
+   falls back to *Crop position*. Moments are chosen by a free offline
    scorer, or by Claude if you paste an Anthropic API key (only the transcript
    text is sent). Command line: `dropcut shorts input.mp4 -o shorts/ --count 5`
-   (set `ANTHROPIC_API_KEY` to use Claude; `--list` previews the picks).
+   (`--no-follow` for a fixed crop; set `ANTHROPIC_API_KEY` to use Claude; `--list` previews the picks).
 9. **Export.** You get an MP4 plus a matching `.srt` caption file (upload it to
    YouTube/TikTok, or drop it on your Premiere/Resolve timeline). Export uses
    the NVIDIA or Apple hardware encoder when available.
@@ -61,8 +62,8 @@ Your settings are remembered between sessions.
 |---|---|---|
 | 1 | Silence removal, transcription + editable captions, profanity filter, installers | **Done** |
 | 2 | Animated burned-in captions (4 styles), auto zoom / punch-ins | **Done** |
-| 3 | Viral short finder (9:16, centre/manual crop) | **Done** |
-| 3b | Face-following reframe for shorts, bad-take (repeat) removal, chapters, B-roll from Pexels | Planned |
+| 3 | Viral short finder with face-following 9:16 reframe | **Done** |
+| 3b | Bad-take (repeat) removal, chapters, B-roll from Pexels | Planned |
 | 4 | Podcast mode: multi-track speaker detection and automatic camera switching | Planned |
 | + | Premiere / Resolve XML export so edits stay editable | Planned |
 
@@ -113,6 +114,7 @@ them as a release.
 
 ## Third-party components
 
-ffmpeg (GPL build, bundled as a separate program), whisper.cpp via
+Ultra-Light-Fast-Generic-Face-Detector-1MB (MIT, `crates/dropcut-core/models/`)
+run through the pure-Rust `tract` engine for face tracking, ffmpeg (GPL build, bundled as a separate program), whisper.cpp via
 `whisper-rs`, and OpenAI Whisper model weights (MIT, downloaded on first use).
 DropCut is private software for personal use.

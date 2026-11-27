@@ -82,7 +82,7 @@ export default function App() {
   const [busy, setBusy] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exported, setExported] = useState<Exported | null>(null);
-  const [shortsDone, setShortsDone] = useState<{ folder: string; n: number; sample: string } | null>(null);
+  const [shortsDone, setShortsDone] = useState<{ folder: string; n: number; sample: string; notes: string[] } | null>(null);
   const [previewEdits, setPreviewEdits] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [dragOver, setDragOver] = useState(false);
@@ -377,6 +377,11 @@ export default function App() {
         <div className="banner ok">
           <span>
             Exported <b>{shortsDone.n}</b> vertical short{shortsDone.n === 1 ? "" : "s"} to <b>{shortsDone.folder}</b>.
+            {shortsDone.notes.map((n) => (
+              <small key={n} className="muted" style={{ display: "block" }}>
+                {n}
+              </small>
+            ))}
           </span>
           <button className="ghost" onClick={() => api.reveal(shortsDone.sample)}>
             Show in folder
@@ -779,7 +784,7 @@ export default function App() {
                 busy={!!busy}
                 run={run}
                 onSeek={seek}
-                onDone={(folder, n, sample) => setShortsDone({ folder, n, sample })}
+                onDone={(folder, n, sample, notes) => setShortsDone({ folder, n, sample, notes })}
               />
             )}
 

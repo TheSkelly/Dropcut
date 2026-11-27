@@ -12,6 +12,7 @@ use dropcut_core::burn::{self, BurnSettings};
 use dropcut_core::captions::{self, CaptionSettings};
 use dropcut_core::media::{self, FfmpegPaths, MediaInfo};
 use dropcut_core::profanity::{self, ProfanitySettings};
+use dropcut_core::reframe::{self, UltraFace};
 use dropcut_core::render::{self, RenderSettings, VideoEffects};
 use dropcut_core::shorts::{self, ShortCandidate, ShortsSettings, Vertical};
 use dropcut_core::silence::{self, SilenceSettings};
@@ -302,6 +303,8 @@ struct Exported {
     srt: Option<PathBuf>,
     encoder: render::VideoEncoder,
     duration: f64,
+    /// Something worth telling the user (e.g. face tracking fell back to a fixed crop).
+    note: Option<String>,
 }
 
 #[tauri::command]
@@ -354,7 +357,7 @@ async fn export(app: AppHandle, state: State<'_, AppState>, req: ExportRequest) 
             None
         };
         emit(&a, "export", Some(1.0), "Done");
-        Ok(Exported { output: outcome.output, srt, encoder: outcome.encoder, duration: outcome.duration })
+        Ok(Exported { output: outcome.output, srt, encoder: outcome.encoder, duration: outcome.duration, note: None })
     })
     .await
 }
@@ -422,6 +425,13 @@ struct ExportShortRequest {
     /// 0 = left, 0.5 = centre, 1 = right.
     #[serde(default = "centre")]
     focus_x: f64,
+    /// Pan the crop to follow the speaker's face.
+    #[serde(default = "yes")]
+    follow_face: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn centre() -> f64 {
@@ -453,12 +463,23 @@ async fn export_short(app: AppHandle, state: State<'_, AppState>, req: ExportSho
         let mut timeline = shorts::clip_timeline(info.duration, &req.pick, &silences);
         timeline.replace_kind(RegionKind::Profanity, profanity::find(&req.words, &req.profanity));
 
+        let mut vertical = Vertical { focus_x: req.focus_x.clamp(0.0, 1.0), ..Default::default() };
+        let mut note = None;
+        if req.follow_face && info.width.unwrap_or(0) as f64 / info.height.unwrap_or(1).max(1) as f64 > 9.0 / 16.0 {
+            emit(&a, "export", None, "Following the speaker");
+            match UltraFace::new().and_then(|mut det| {
+                reframe::track_faces(&paths, &source, req.pick.start, req.pick.end, &mut det, 3.0, |p| {
+                    emit(&a, "export", Some(p), format!("Following the speaker {:.0}%", p * 100.0))
+                })
+            }) {
+                Ok(t) if t.is_usable() => vertical.track = reframe::to_output_keys(&t.path, &timeline),
+                Ok(_) => note = Some("No steady face was found, so the crop position setting was used.".to_string()),
+                Err(e) => note = Some(format!("Face tracking failed ({e}); the crop position setting was used.")),
+            }
+        }
+
         let cues = captions::build_cues(&req.words, &timeline, &shorts::caption_settings());
-        let mut effects = VideoEffects {
-            zoom_focus_y: 0.4,
-            vertical: Some(Vertical { focus_x: req.focus_x.clamp(0.0, 1.0) }),
-            ..Default::default()
-        };
+        let mut effects = VideoEffects { zoom_focus_y: 0.4, vertical: Some(vertical), ..Default::default() };
         if req.burn.enabled {
             effects.subtitles = Some(burn::to_ass(&cues, &req.burn, shorts::OUT_W, shorts::OUT_H));
             effects.fonts_dir = fonts_dir.filter(|d| d.is_dir());
@@ -475,7 +496,7 @@ async fn export_short(app: AppHandle, state: State<'_, AppState>, req: ExportSho
         )
         .map_err(err)?;
         emit(&a, "export", Some(1.0), "Done");
-        Ok(Exported { output: outcome.output, srt: None, encoder: outcome.encoder, duration: outcome.duration })
+        Ok(Exported { output: outcome.output, srt: None, encoder: outcome.encoder, duration: outcome.duration, note })
     })
     .await
 }

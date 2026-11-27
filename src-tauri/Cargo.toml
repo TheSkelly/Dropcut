@@ -21,7 +21,7 @@ cuda = ["dropcut-core/cuda"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-dropcut-core = { path = "../crates/dropcut-core", features = ["whisper", "download"] }
+dropcut-core = { path = "../crates/dropcut-core", features = ["whisper", "download", "faces"] }
 tauri = { version = "2", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 serde.workspace = true
