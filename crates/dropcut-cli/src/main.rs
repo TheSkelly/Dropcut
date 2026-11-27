@@ -9,6 +9,7 @@ use dropcut_core::captions::{self, CaptionSettings};
 use dropcut_core::media::{self, FfmpegPaths};
 use dropcut_core::profanity::{self, CensorMode, ProfanitySettings};
 use dropcut_core::render::{self, RenderSettings, VideoEffects, VideoEncoder};
+use dropcut_core::shorts::{self, ShortCandidate, ShortsSettings, Vertical};
 use dropcut_core::silence::{self, SilenceSettings};
 use dropcut_core::transcript::{self, TranscribeOptions, Transcript};
 use dropcut_core::zoom::{self, ZoomSettings};
@@ -21,6 +22,7 @@ USAGE:
   dropcut cut <input> -o <output> [options]   Edit and export
   dropcut analyze <input> [options]           Show what would be cut (JSON)
   dropcut transcribe <input> [-o words.json]  Word-level transcript
+  dropcut shorts <input> -o <folder> [opts]   Find the best moments and export vertical clips
   dropcut models                              List speech models
   dropcut download <model>                    Download a speech model
 
@@ -42,6 +44,17 @@ OPTIONS:
                            clean | highlight | pop | karaoke
   --fonts <dir>            Caption font folder (default: next to dropcut)
   --zoom [amount]          Automatic punch-in zooms (default 1.15)
+
+SHORTS OPTIONS (dropcut shorts):
+  --count <n>              How many clips (default 5)
+  --min-len <secs>         Shortest clip (default 20)
+  --max-len <secs>         Longest clip (default 75)
+  --words <words.json>     Reuse a transcript from `dropcut transcribe` (skips speech recognition)
+  --focus-x <0..1>         Horizontal crop position for 9:16 (default 0.5 = centre)
+  --llm-model <id>         Claude model for picking clips (default claude-sonnet-5-5)
+  --list                   Only list the chosen moments (JSON); don't render
+  Set ANTHROPIC_API_KEY to let Claude pick the moments; without it an offline
+  heuristic is used. Captions are burned in (default style: highlight).
 ";
 
 #[derive(Default)]
@@ -61,11 +74,16 @@ struct Args {
     burn: Option<CaptionStyle>,
     fonts: Option<PathBuf>,
     zoom: Option<f64>,
+    shorts: ShortsSettings,
+    words_file: Option<PathBuf>,
+    focus_x: f64,
+    llm_model: Option<String>,
+    list_only: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut raw = std::env::args().skip(1).peekable();
-    let mut a = Args { command: raw.next().unwrap_or_default(), ..Default::default() };
+    let mut a = Args { command: raw.next().unwrap_or_default(), focus_x: 0.5, ..Default::default() };
     let mut positional = Vec::new();
     while let Some(arg) = raw.next() {
         let mut value = |name: &str| raw.next().ok_or_else(|| format!("{name} needs a value"));
@@ -96,6 +114,13 @@ fn parse_args() -> Result<Args, String> {
                     other => return Err(format!("unknown caption style {other}")),
                 })
             }
+            "--count" => a.shorts.count = num(value(&arg)?, &arg)? as usize,
+            "--min-len" => a.shorts.min_seconds = num(value(&arg)?, &arg)?,
+            "--max-len" => a.shorts.max_seconds = num(value(&arg)?, &arg)?,
+            "--words" => a.words_file = Some(value(&arg)?.into()),
+            "--focus-x" => a.focus_x = num(value(&arg)?, &arg)?.clamp(0.0, 1.0),
+            "--llm-model" => a.llm_model = Some(value(&arg)?),
+            "--list" => a.list_only = true,
             "--fonts" => a.fonts = Some(value(&arg)?.into()),
             "--zoom" => {
                 // Optional numeric amount right after the flag.
@@ -185,6 +210,107 @@ fn transcribe_file(samples: &[f32], a: &Args) -> Result<Transcript, String> {
     Ok(t)
 }
 
+fn slug(s: &str) -> String {
+    let t: String = s.chars().map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' }).collect();
+    let t = t.split('-').filter(|p| !p.is_empty()).collect::<Vec<_>>().join("-");
+    t.chars().take(40).collect::<String>().trim_matches('-').to_string()
+}
+
+fn pick_shorts(words: &[transcript::Word], duration: f64, a: &Args) -> Vec<ShortCandidate> {
+    #[cfg(feature = "whisper")]
+    if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
+        if !key.trim().is_empty() {
+            let model = a.llm_model.as_deref().unwrap_or("claude-sonnet-5-5");
+            eprintln!("Asking Claude ({model}) to pick the best moments ...");
+            match shorts::find_with_llm(words, duration, &a.shorts, key.trim(), model) {
+                Ok(c) if !c.is_empty() => return c,
+                Ok(_) => eprintln!("Claude returned no usable clips; using the offline heuristic."),
+                Err(e) => eprintln!("Claude selection failed ({e}); using the offline heuristic."),
+            }
+        }
+    }
+    #[cfg(not(feature = "whisper"))]
+    let _ = (duration, &a.llm_model);
+    eprintln!("Picking moments with the offline heuristic ...");
+    shorts::find_heuristic(words, &a.shorts)
+}
+
+fn run_shorts(a: &Args, paths: &FfmpegPaths) -> Result<(), String> {
+    let input = a.input.clone().ok_or("missing input file")?;
+    let info = media::probe(paths, &input).map_err(|e| e.to_string())?;
+    if !info.has_video || !info.has_audio {
+        return Err("shorts need a file with both video and audio".into());
+    }
+    eprintln!("Decoding audio ({:.1}s) ...", info.duration);
+    let samples = media::decode_audio(paths, &input).map_err(|e| e.to_string())?;
+    let levels = silence::frame_levels_db(&samples, media::ANALYSIS_RATE);
+    let analysis = silence::detect_from_levels(&levels, &a.silence);
+
+    let transcript = match &a.words_file {
+        Some(p) => {
+            let text = std::fs::read_to_string(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            serde_json::from_str::<Transcript>(&text).map_err(|e| format!("{}: {e}", p.display()))?
+        }
+        None => {
+            let mut t = transcribe_file(&samples, a)?;
+            transcript::align_to_speech(&mut t.words, &silence::speech_spans(&levels, analysis.threshold_db, 0.25));
+            t
+        }
+    };
+    let picks = pick_shorts(&transcript.words, info.duration, a);
+    if picks.is_empty() {
+        return Err("no suitable moments found (try a longer video or a lower --min-len)".into());
+    }
+    for (i, c) in picks.iter().enumerate() {
+        eprintln!("  {:>2}. {:>6.1}s to {:>6.1}s  score {:>3}  {}", i + 1, c.start, c.end, c.score, c.title);
+    }
+    if a.list_only {
+        println!("{}", serde_json::to_string_pretty(&picks).unwrap());
+        return Ok(());
+    }
+
+    let out_dir = a.output.clone().ok_or("missing -o <output folder>")?;
+    std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+    let stem = input.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "short".into());
+    let settings = RenderSettings { encoder: a.encoder, censor_mode: a.profanity.mode, ..Default::default() };
+    let caption_settings = CaptionSettings { max_words: 3, max_chars: 20, uppercase: true, ..Default::default() };
+    let style = a.burn.unwrap_or(CaptionStyle::Highlight);
+    let fonts = a.fonts.clone().or_else(|| {
+        std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("fonts"))).filter(|d| d.is_dir())
+    });
+
+    let mut written = Vec::new();
+    for (i, c) in picks.iter().enumerate() {
+        // Everything outside the pick is cut; pauses inside it are tightened.
+        let mut timeline = Timeline::new(info.duration);
+        timeline.add(RegionKind::Manual, dropcut_core::Span::new(0.0, c.start), None);
+        timeline.add(RegionKind::Manual, dropcut_core::Span::new(c.end, info.duration), None);
+        if !a.keep_silences {
+            timeline.replace_kind(RegionKind::Silence, analysis.silences.iter().map(|s| (*s, None)));
+        }
+        timeline.replace_kind(RegionKind::Profanity, profanity::find(&transcript.words, &a.profanity));
+
+        let cues = captions::build_cues(&transcript.words, &timeline, &caption_settings);
+        let bs = BurnSettings { enabled: true, style, ..Default::default() };
+        let effects = VideoEffects {
+            zoom_focus_y: 0.4,
+            vertical: Some(Vertical { focus_x: a.focus_x }),
+            subtitles: Some(burn::to_ass(&cues, &bs, shorts::OUT_W, shorts::OUT_H)),
+            fonts_dir: fonts.clone(),
+            ..Default::default()
+        };
+        let name = format!("{stem}_{:02}_{}.mp4", i + 1, slug(&c.title));
+        let out = out_dir.join(name);
+        let outcome = render::render(paths, &info, &timeline, &out, &settings, &effects, |p| eprint!("\r  clip {}/{} {:>3.0}%", i + 1, picks.len(), p * 100.0), None)
+            .map_err(|e| e.to_string())?;
+        eprintln!("\nWrote {} ({:.1}s)", outcome.output.display(), outcome.duration);
+        written.push(outcome.output);
+    }
+    std::fs::write(out_dir.join("shorts.json"), serde_json::to_string_pretty(&picks).unwrap()).map_err(|e| e.to_string())?;
+    eprintln!("Done: {} shorts in {}", written.len(), out_dir.display());
+    Ok(())
+}
+
 fn run(a: Args) -> Result<(), String> {
     let paths = FfmpegPaths::from_dir_or_path(std::env::current_exe().ok().as_deref().and_then(Path::parent));
     match a.command.as_str() {
@@ -200,6 +326,7 @@ fn run(a: Args) -> Result<(), String> {
             let id = a.input.as_ref().ok_or("which model?")?.to_string_lossy().to_string();
             download_model(&id)
         }
+        "shorts" => run_shorts(&a, &paths),
         "analyze" | "transcribe" | "cut" => {
             let input = a.input.clone().ok_or("missing input file")?;
             let info = media::probe(&paths, &input).map_err(|e| e.to_string())?;

@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::media::{FfmpegPaths, MediaInfo};
 use crate::profanity::CensorMode;
+use crate::shorts::{self, Vertical};
 use crate::timeline::{Span, Timeline};
 use crate::zoom::{self, ZoomSegment};
 use crate::{Error, Result};
@@ -59,6 +60,9 @@ pub struct VideoEffects {
     pub zoom: Vec<ZoomSegment>,
     /// Vertical zoom focus, 0 = top, 1 = bottom.
     pub zoom_focus_y: f64,
+    /// Crop to 9:16 and scale to 1080x1920 (after zoom, before captions, so
+    /// caption scripts should be written for a 1080x1920 frame).
+    pub vertical: Option<Vertical>,
     /// A complete ASS script to burn in (see [`crate::burn::to_ass`]).
     pub subtitles: Option<String>,
     /// Folder of font files the subtitles use.
@@ -94,6 +98,10 @@ pub fn build_filter_graph(timeline: &Timeline, info: &MediaInfo, censor_mode: Ce
                 chain.push(',');
                 chain.push_str(&z);
             }
+        }
+        if let (Some(v), Some(w), Some(h)) = (&effects.vertical, info.width, info.height) {
+            chain.push(',');
+            chain.push_str(&shorts::vertical_filter(w, h, v));
         }
         if effects.subtitles.is_some() {
             chain.push_str(&format!(",subtitles={SUBS_FILE}:fontsdir={FONTS_DIR}"));
@@ -367,6 +375,7 @@ mod tests {
         let fx = VideoEffects {
             zoom: vec![ZoomSegment { start: 1.0, end: 2.0, scale: 1.2 }],
             zoom_focus_y: 0.4,
+            vertical: None,
             subtitles: Some(String::new()),
             fonts_dir: None,
         };
@@ -375,6 +384,22 @@ mod tests {
         let (sel, zp, sub) = (v.find("select=").unwrap(), v.find("zoompan=").unwrap(), v.find("subtitles=").unwrap());
         assert!(sel < zp && zp < sub, "{v}");
         assert!(v.trim_end_matches(';').ends_with("subtitles=captions.ass:fontsdir=fonts[v]"), "{v}");
+    }
+
+    #[test]
+    fn vertical_crop_sits_between_zoom_and_captions() {
+        let fx = VideoEffects {
+            zoom: vec![ZoomSegment { start: 1.0, end: 2.0, scale: 1.2 }],
+            zoom_focus_y: 0.4,
+            vertical: Some(Vertical::default()),
+            subtitles: Some(String::new()),
+            fonts_dir: None,
+        };
+        let g = build_filter_graph(&timeline(), &info(true), CensorMode::Mute, &fx);
+        let v = g.lines().find(|l| l.starts_with("[0:v:0]")).unwrap();
+        let (zp, cr, sub) = (v.find("zoompan=").unwrap(), v.find("crop=").unwrap(), v.find("subtitles=").unwrap());
+        assert!(zp < cr && cr < sub, "{v}");
+        assert!(v.contains("scale=1080:1920"));
     }
 
     #[test]

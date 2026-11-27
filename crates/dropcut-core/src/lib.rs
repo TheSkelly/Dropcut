@@ -11,6 +11,7 @@
 //! * [`captions`]: grouping words into caption lines and writing SRT
 //! * [`burn`]: animated captions burned into the video (ASS)
 //! * [`zoom`]: automatic punch-in zooms
+//! * [`shorts`]: finding the best short clips and framing them 9:16
 //! * [`render`]: turning a timeline into a finished video with ffmpeg
 //! * [`models`]: the Whisper model catalogue and downloads
 
@@ -21,6 +22,7 @@ pub mod media;
 pub mod models;
 pub mod profanity;
 pub mod render;
+pub mod shorts;
 pub mod silence;
 pub mod timeline;
 pub mod transcript;
