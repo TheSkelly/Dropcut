@@ -10,6 +10,9 @@ import type {
   ZoomSettings,
   CaptionSettings,
   Cue,
+  FoundShorts,
+  ShortCandidate,
+  ShortsSettings,
   MediaInfo,
   ProfanitySettings,
   Progress,
@@ -64,6 +67,24 @@ export const api = {
     burn: BurnSettings;
     zoom: ZoomSettings;
   }) => invoke<Exported>("export", { req }),
+  findShorts: (req: {
+    words: Word[];
+    duration: number;
+    settings: ShortsSettings;
+    api_key: string | null;
+    llm_model: string | null;
+  }) => invoke<FoundShorts>("find_shorts", { req }),
+  exportShort: (req: {
+    output: string;
+    pick: ShortCandidate;
+    words: Word[];
+    render: RenderSettings;
+    burn: BurnSettings;
+    silence: SilenceSettings;
+    profanity: ProfanitySettings;
+    tighten: boolean;
+    focus_x: number;
+  }) => invoke<Exported>("export_short", { req }),
   previewZoom: (timeline: Timeline, words: Word[], captions: CaptionSettings, zoom: ZoomSettings) =>
     invoke<ZoomSegment[]>("preview_zoom", { timeline, words, captions, zoom }),
   previewCaptions: (timeline: Timeline, words: Word[], captions: CaptionSettings) =>
@@ -91,6 +112,16 @@ export async function pickOutput(source: string, hasVideo: boolean): Promise<str
     defaultPath: `${base} (DropCut).${ext}`,
     filters: [hasVideo ? { name: "MP4 video", extensions: ["mp4"] } : { name: "Audio", extensions: ["m4a"] }],
   });
+}
+
+export async function pickFolder(): Promise<string | null> {
+  const picked = await open({ directory: true, multiple: false });
+  return typeof picked === "string" ? picked : null;
+}
+
+export function joinPath(dir: string, name: string): string {
+  const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+  return dir.endsWith(sep) ? dir + name : dir + sep + name;
 }
 
 export function mediaUrl(path: string): string {

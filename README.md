@@ -41,7 +41,15 @@ once in Terminal: `xattr -cr /Applications/DropCut.app`.
 7. **Auto zoom (optional).** Punches in and out automatically, either at each
    cut or at sentence starts, so jump cuts look intentional. Set how far to
    zoom, how long to hold each framing, and where faces sit in your shots.
-8. **Export.** You get an MP4 plus a matching `.srt` caption file (upload it to
+8. **Shorts (optional).** Open the **Shorts** panel after transcribing. It finds
+   the best 20 to 75 second moments (strong hook, complete thought), you tick
+   the ones you like, and it exports each as a 1080x1920 vertical video with
+   burned-in captions and pauses tightened. Pick where the 9:16 frame sits on
+   a wide video with *Crop position*. Moments are chosen by a free offline
+   scorer, or by Claude if you paste an Anthropic API key (only the transcript
+   text is sent). Command line: `dropcut shorts input.mp4 -o shorts/ --count 5`
+   (set `ANTHROPIC_API_KEY` to use Claude; `--list` previews the picks).
+9. **Export.** You get an MP4 plus a matching `.srt` caption file (upload it to
    YouTube/TikTok, or drop it on your Premiere/Resolve timeline). Export uses
    the NVIDIA or Apple hardware encoder when available.
 
@@ -53,7 +61,8 @@ Your settings are remembered between sessions.
 |---|---|---|
 | 1 | Silence removal, transcription + editable captions, profanity filter, installers | **Done** |
 | 2 | Animated burned-in captions (4 styles), auto zoom / punch-ins | **Done** |
-| 3 | Bad-take (repeat) removal, chapters, viral short finder (9:16 reframe), B-roll from Pexels | Planned |
+| 3 | Viral short finder (9:16, centre/manual crop) | **Done** |
+| 3b | Face-following reframe for shorts, bad-take (repeat) removal, chapters, B-roll from Pexels | Planned |
 | 4 | Podcast mode: multi-track speaker detection and automatic camera switching | Planned |
 | + | Premiere / Resolve XML export so edits stay editable | Planned |
 
@@ -61,7 +70,7 @@ Your settings are remembered between sessions.
 
 ```
 crates/dropcut-core   The engine: ffmpeg, silence detection, timeline, Whisper,
-                      profanity, captions, rendering. Unit tested.
+                      profanity, captions, shorts finder, rendering. Unit tested.
 crates/dropcut-cli    `dropcut` command-line tool (same engine, handy for batches)
 src-tauri             Desktop app backend (Tauri commands wrapping the engine)
 src                   React interface

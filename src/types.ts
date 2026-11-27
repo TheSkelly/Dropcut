@@ -134,6 +134,28 @@ export interface AppInfo {
   default_model: string;
 }
 
+export interface ShortCandidate {
+  start: number;
+  end: number;
+  title: string;
+  hook: string;
+  score: number;
+  /** "llm" or "heuristic" */
+  source: string;
+}
+
+export interface ShortsSettings {
+  count: number;
+  min_seconds: number;
+  max_seconds: number;
+}
+
+export interface FoundShorts {
+  shorts: ShortCandidate[];
+  used_llm: boolean;
+  note: string | null;
+}
+
 export interface Progress {
   task: "open" | "download" | "transcribe" | "export";
   value: number | null;

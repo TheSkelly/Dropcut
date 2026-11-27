@@ -13,6 +13,7 @@ use dropcut_core::captions::{self, CaptionSettings};
 use dropcut_core::media::{self, FfmpegPaths, MediaInfo};
 use dropcut_core::profanity::{self, ProfanitySettings};
 use dropcut_core::render::{self, RenderSettings, VideoEffects};
+use dropcut_core::shorts::{self, ShortCandidate, ShortsSettings, Vertical};
 use dropcut_core::silence::{self, SilenceSettings};
 use dropcut_core::transcript::{self, TranscribeOptions, Transcript};
 use dropcut_core::zoom::{self, ZoomSegment, ZoomSettings};
@@ -358,6 +359,127 @@ async fn export(app: AppHandle, state: State<'_, AppState>, req: ExportRequest) 
     .await
 }
 
+// ---------------------------------------------------------------- shorts
+
+#[derive(Deserialize)]
+struct FindShortsRequest {
+    words: Vec<transcript::Word>,
+    duration: f64,
+    #[serde(default)]
+    settings: ShortsSettings,
+    /// Anthropic API key. Without one, the offline heuristic is used.
+    #[serde(default)]
+    api_key: Option<String>,
+    #[serde(default)]
+    llm_model: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FoundShorts {
+    shorts: Vec<ShortCandidate>,
+    used_llm: bool,
+    /// Why the heuristic was used instead of Claude, when that happened.
+    note: Option<String>,
+}
+
+#[tauri::command]
+async fn find_shorts(req: FindShortsRequest) -> CmdResult<FoundShorts> {
+    if req.words.is_empty() {
+        return Err("Transcribe the video first; shorts are picked from the transcript.".into());
+    }
+    blocking(move || {
+        let key = req.api_key.as_deref().map(str::trim).filter(|k| !k.is_empty());
+        let mut note = None;
+        if let Some(key) = key {
+            let model = req.llm_model.as_deref().unwrap_or("claude-sonnet-5-5");
+            match shorts::find_with_llm(&req.words, req.duration, &req.settings, key, model) {
+                Ok(found) if !found.is_empty() => return Ok(FoundShorts { shorts: found, used_llm: true, note: None }),
+                Ok(_) => note = Some("Claude returned no usable moments, so the offline picker was used.".to_string()),
+                Err(e) => note = Some(format!("Claude couldn't be used ({e}), so the offline picker was used.")),
+            }
+        }
+        Ok(FoundShorts { shorts: shorts::find_heuristic(&req.words, &req.settings), used_llm: false, note })
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct ExportShortRequest {
+    output: PathBuf,
+    pick: ShortCandidate,
+    words: Vec<transcript::Word>,
+    #[serde(default)]
+    render: RenderSettings,
+    #[serde(default)]
+    burn: BurnSettings,
+    #[serde(default)]
+    silence: SilenceSettings,
+    #[serde(default)]
+    profanity: ProfanitySettings,
+    /// Remove pauses inside the clip.
+    #[serde(default)]
+    tighten: bool,
+    /// 0 = left, 0.5 = centre, 1 = right.
+    #[serde(default = "centre")]
+    focus_x: f64,
+}
+
+fn centre() -> f64 {
+    0.5
+}
+
+#[tauri::command]
+async fn export_short(app: AppHandle, state: State<'_, AppState>, req: ExportShortRequest) -> CmdResult<Exported> {
+    let (source, levels) = {
+        let guard = state.loaded.lock().unwrap();
+        let l = guard.as_ref().ok_or("No file is open.")?;
+        (l.path.clone(), l.levels.clone())
+    };
+    if source == req.output {
+        return Err("Choose a different file name; exporting over the original isn't allowed.".into());
+    }
+    let cancel = reset_cancel(&state);
+    let fonts_dir = app.path().resource_dir().ok().map(|d| d.join("fonts"));
+    let a = app.clone();
+    blocking(move || {
+        let paths = ffmpeg_paths();
+        let info = media::probe(&paths, &source).map_err(err)?;
+        if !info.has_video {
+            return Err("Shorts need a video file.".into());
+        }
+        emit(&a, "export", Some(0.0), "Starting export");
+
+        let silences = if req.tighten { silence::detect_from_levels(&levels, &req.silence).silences } else { Vec::new() };
+        let mut timeline = shorts::clip_timeline(info.duration, &req.pick, &silences);
+        timeline.replace_kind(RegionKind::Profanity, profanity::find(&req.words, &req.profanity));
+
+        let cues = captions::build_cues(&req.words, &timeline, &shorts::caption_settings());
+        let mut effects = VideoEffects {
+            zoom_focus_y: 0.4,
+            vertical: Some(Vertical { focus_x: req.focus_x.clamp(0.0, 1.0) }),
+            ..Default::default()
+        };
+        if req.burn.enabled {
+            effects.subtitles = Some(burn::to_ass(&cues, &req.burn, shorts::OUT_W, shorts::OUT_H));
+            effects.fonts_dir = fonts_dir.filter(|d| d.is_dir());
+        }
+        let outcome = render::render(
+            &paths,
+            &info,
+            &timeline,
+            &req.output,
+            &req.render,
+            &effects,
+            |p| emit(&a, "export", Some(p), format!("Exporting short {:.0}%", p * 100.0)),
+            Some(cancel),
+        )
+        .map_err(err)?;
+        emit(&a, "export", Some(1.0), "Done");
+        Ok(Exported { output: outcome.output, srt: None, encoder: outcome.encoder, duration: outcome.duration })
+    })
+    .await
+}
+
 /// Captions for the current edit, for previewing in the UI.
 #[tauri::command]
 fn preview_captions(timeline: Timeline, words: Vec<transcript::Word>, captions: CaptionSettings) -> Vec<captions::Cue> {
@@ -398,6 +520,8 @@ pub fn run() {
             transcribe,
             find_profanity,
             export,
+            find_shorts,
+            export_short,
             preview_captions,
             preview_zoom,
             reveal,

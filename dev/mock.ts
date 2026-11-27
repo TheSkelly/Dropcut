@@ -38,6 +38,18 @@ mockIPC(async (cmd, args: any) => {
       return args.zoom.enabled ? [{ start: 2.9, end: 6.0, scale: args.zoom.amount }] : [];
     case "export":
       return { output: "/videos/test (DropCut).mp4", srt: "/videos/test (DropCut).srt", encoder: "nvenc", duration: 9.8 };
+    case "find_shorts":
+      return {
+        shorts: [
+          { start: 12.4, end: 47.9, title: "Why most people quit in week two", hook: "Why does everyone quit so early?", score: 92, source: "llm" },
+          { start: 80.0, end: 118.5, title: "The biggest editing mistake", hook: "Here is the mistake I made for years.", score: 81, source: "llm" },
+          { start: 160.2, end: 190.0, title: "A free trick nobody mentions", hook: "Nobody tells you this part.", score: 74, source: "llm" },
+        ],
+        used_llm: !!args.req.api_key,
+        note: args.req.api_key ? null : "Showing the offline picker (no API key).",
+      };
+    case "export_short":
+      return { output: args.req.output, srt: null, encoder: "x264", duration: 35.5 };
     case "plugin:dialog|open":
       return "/videos/test.mp4";
     case "plugin:event|listen":

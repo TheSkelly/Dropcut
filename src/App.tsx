@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, fileName, inTauri, mediaUrl, onProgress, pickMedia, pickOutput, type Exported } from "./api";
 import { Player, type PlayerHandle } from "./components/Player";
+import { ShortsPanel } from "./components/ShortsPanel";
 import { TranscriptView } from "./components/TranscriptView";
 import { Waveform } from "./components/Waveform";
 import {
@@ -81,6 +82,7 @@ export default function App() {
   const [busy, setBusy] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exported, setExported] = useState<Exported | null>(null);
+  const [shortsDone, setShortsDone] = useState<{ folder: string; n: number; sample: string } | null>(null);
   const [previewEdits, setPreviewEdits] = useState(true);
   const [currentTime, setCurrentTime] = useState(0);
   const [dragOver, setDragOver] = useState(false);
@@ -366,6 +368,20 @@ export default function App() {
             Show in folder
           </button>
           <button className="ghost" onClick={() => setExported(null)}>
+            Close
+          </button>
+        </div>
+      )}
+
+      {shortsDone && (
+        <div className="banner ok">
+          <span>
+            Exported <b>{shortsDone.n}</b> vertical short{shortsDone.n === 1 ? "" : "s"} to <b>{shortsDone.folder}</b>.
+          </span>
+          <button className="ghost" onClick={() => api.reveal(shortsDone.sample)}>
+            Show in folder
+          </button>
+          <button className="ghost" onClick={() => setShortsDone(null)}>
             Close
           </button>
         </div>
@@ -754,6 +770,18 @@ export default function App() {
                 </ul>
               )}
             </section>
+
+            {info && (
+              <ShortsPanel
+                info={info}
+                words={words}
+                settings={settings}
+                busy={!!busy}
+                run={run}
+                onSeek={seek}
+                onDone={(folder, n, sample) => setShortsDone({ folder, n, sample })}
+              />
+            )}
 
             <section className="panel">
               <div className="panel-head">

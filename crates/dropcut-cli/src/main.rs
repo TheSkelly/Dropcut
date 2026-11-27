@@ -273,7 +273,7 @@ fn run_shorts(a: &Args, paths: &FfmpegPaths) -> Result<(), String> {
     std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
     let stem = input.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "short".into());
     let settings = RenderSettings { encoder: a.encoder, censor_mode: a.profanity.mode, ..Default::default() };
-    let caption_settings = CaptionSettings { max_words: 3, max_chars: 20, uppercase: true, ..Default::default() };
+    let caption_settings = shorts::caption_settings();
     let style = a.burn.unwrap_or(CaptionStyle::Highlight);
     let fonts = a.fonts.clone().or_else(|| {
         std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join("fonts"))).filter(|d| d.is_dir())
@@ -282,12 +282,8 @@ fn run_shorts(a: &Args, paths: &FfmpegPaths) -> Result<(), String> {
     let mut written = Vec::new();
     for (i, c) in picks.iter().enumerate() {
         // Everything outside the pick is cut; pauses inside it are tightened.
-        let mut timeline = Timeline::new(info.duration);
-        timeline.add(RegionKind::Manual, dropcut_core::Span::new(0.0, c.start), None);
-        timeline.add(RegionKind::Manual, dropcut_core::Span::new(c.end, info.duration), None);
-        if !a.keep_silences {
-            timeline.replace_kind(RegionKind::Silence, analysis.silences.iter().map(|s| (*s, None)));
-        }
+        let silences = if a.keep_silences { Vec::new() } else { analysis.silences.clone() };
+        let mut timeline = shorts::clip_timeline(info.duration, c, &silences);
         timeline.replace_kind(RegionKind::Profanity, profanity::find(&transcript.words, &a.profanity));
 
         let cues = captions::build_cues(&transcript.words, &timeline, &caption_settings);

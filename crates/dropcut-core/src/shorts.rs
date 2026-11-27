@@ -12,6 +12,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::captions::CaptionSettings;
+use crate::timeline::{RegionKind, Span, Timeline};
 use crate::transcript::Word;
 use crate::{Error, Result};
 
@@ -301,6 +303,23 @@ pub fn find_with_llm(
     parse_llm_response(&reply, words, duration, settings)
 }
 
+// ------------------------------------------------------------ building a clip
+
+/// Timeline for one short: everything outside the pick is cut, and pauses
+/// inside it are tightened using the whole video's detected `silences`.
+pub fn clip_timeline(duration: f64, pick: &ShortCandidate, silences: &[Span]) -> Timeline {
+    let mut t = Timeline::new(duration);
+    t.add(RegionKind::Manual, Span::new(0.0, pick.start), None);
+    t.add(RegionKind::Manual, Span::new(pick.end, duration), None);
+    t.replace_kind(RegionKind::Silence, silences.iter().map(|s| (*s, None)));
+    t
+}
+
+/// Punchy caption grouping for vertical video: a few big words at a time.
+pub fn caption_settings() -> CaptionSettings {
+    CaptionSettings { max_words: 3, max_chars: 20, uppercase: true, ..Default::default() }
+}
+
 // ----------------------------------------------------------- vertical framing
 
 /// Output size for vertical shorts.
@@ -444,6 +463,14 @@ mod tests {
         let p = build_prompt(&talk(4), &ShortsSettings::default());
         assert!(p.contains("between 20 and 75 seconds"));
         assert!(p.contains("[0.0-2.0]"), "{p}");
+    }
+
+    #[test]
+    fn clip_timeline_keeps_only_the_pick_minus_pauses() {
+        let pick = ShortCandidate { start: 10.0, end: 30.0, title: String::new(), hook: String::new(), score: 50, source: "heuristic".into() };
+        let t = clip_timeline(100.0, &pick, &[Span::new(15.0, 16.0), Span::new(50.0, 55.0)]);
+        assert!((t.output_duration() - 19.0).abs() < 1e-6, "{}", t.output_duration());
+        assert_eq!(t.kept(), vec![Span::new(10.0, 15.0), Span::new(16.0, 30.0)]);
     }
 
     #[test]
