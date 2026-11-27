@@ -14,9 +14,12 @@ then **Run anyway**. Speech recognition runs on your NVIDIA GPU through
 Vulkan, which comes with the normal NVIDIA driver (keep it up to date).
 
 **Mac (Apple Silicon):** open the `.dmg` and drag DropCut into Applications.
-The first time, **right-click DropCut → Open** (double-clicking will refuse
-because the app isn't notarized). If macOS says the app "is damaged", run this
-once in Terminal: `xattr -cr /Applications/DropCut.app`.
+If macOS says Apple "could not verify DropCut is free of malware", the build
+was not notarized (see `docs/macos-signing.md` to fix that for good). To open it
+anyway: on macOS 15 and later, open System Settings > Privacy & Security, scroll
+to the DropCut message and click **Open Anyway**; on macOS 14 and earlier,
+right-click DropCut > **Open**. If it says the app "is damaged", run this once in
+Terminal: `xattr -cr /Applications/DropCut.app`
 
 ## Using it
 

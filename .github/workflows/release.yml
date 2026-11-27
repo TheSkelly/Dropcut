@@ -6,6 +6,9 @@
 # Windows: NSIS .exe installer, speech recognition on the GPU through Vulkan
 #          (works on NVIDIA with the normal driver; no CUDA install needed).
 # macOS:   .dmg for Apple Silicon, speech recognition on the GPU through Metal.
+#          Signed with a Developer ID certificate and notarized by Apple when the
+#          APPLE_* repository secrets exist (see docs/macos-signing.md); without
+#          them the app is ad-hoc signed and macOS shows its "can't verify" warning.
 
 name: Release
 
@@ -106,6 +109,34 @@ jobs:
           "$bin" -hide_banner -filters | grep -E " subtitles " || { echo "bundled ffmpeg lacks libass"; exit 1; }
           "$bin" -hide_banner -filters | grep -E " zoompan "
 
+      # Signing is optional: only export the Apple variables when every one is
+      # present, because Tauri treats an empty APPLE_ID as "notarize" and fails.
+      - name: Configure Apple signing (macOS)
+        if: runner.os == 'macOS'
+        env:
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID_VALUE: ${{ secrets.APPLE_ID }}
+          APP_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$CERT" ] && [ -n "$CERT_PASSWORD" ] && [ -n "$IDENTITY" ] && [ -n "$APPLE_ID_VALUE" ] && [ -n "$APP_PASSWORD" ] && [ -n "$TEAM_ID" ]; then
+            {
+              echo "APPLE_CERTIFICATE=$CERT"
+              echo "APPLE_CERTIFICATE_PASSWORD=$CERT_PASSWORD"
+              echo "APPLE_SIGNING_IDENTITY=$IDENTITY"
+              echo "APPLE_ID=$APPLE_ID_VALUE"
+              echo "APPLE_PASSWORD=$APP_PASSWORD"
+              echo "APPLE_TEAM_ID=$TEAM_ID"
+            } >> "$GITHUB_ENV"
+            echo "DROPCUT_SIGNED=1" >> "$GITHUB_ENV"
+            echo "Developer ID signing and notarization enabled."
+          else
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "::warning::Apple signing secrets are not all set; building an unsigned (ad-hoc) app. Mac users will see Gatekeeper's warning. See docs/macos-signing.md."
+          fi
+
       # ---------------------------------------------------------- build
       - run: npm ci
 
@@ -120,7 +151,18 @@ jobs:
           releaseName: DropCut v__VERSION__
           releaseBody: |
             **Windows:** download the `.exe`, run it. If Windows shows "Windows protected your PC", click *More info* then *Run anyway*.
-            **Mac (Apple Silicon):** download the `.dmg`, drag DropCut to Applications, then right-click DropCut and choose *Open* the first time.
+            **Mac (Apple Silicon):** download the `.dmg` and drag DropCut to Applications. If macOS says it "could not verify DropCut is free of malware" (this build was not notarized): open *System Settings > Privacy & Security*, scroll to the DropCut message and click *Open Anyway*. On macOS 14 or earlier you can instead right-click DropCut and choose *Open*.
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }} --features ${{ matrix.features }}
+
+      # If signing was configured, fail the release loudly when the result is
+      # not actually signed and notarized, instead of shipping a broken app.
+      - name: Verify signature and notarization (macOS)
+        if: runner.os == 'macOS' && env.DROPCUT_SIGNED == '1'
+        run: |
+          app="$CARGO_TARGET_DIR/${{ matrix.target }}/release/bundle/macos/DropCut.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=4 "$app"
+          for tool in ffmpeg ffprobe; do codesign --verify --strict "$app/Contents/MacOS/$tool"; done
